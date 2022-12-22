@@ -1,0 +1,1905 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#bookmark-management-with-mongodb-and-mongoose">Chapter 6: Bookmark Management with MongoDB and Mongoose</a>
+<ul>
+<li><a href="#install-packages-and-configure-mongoose">Install Packages and Configure Mongoose</a></li>
+<li><a href="#scaffold-the-bookmarks-service">Scaffold the Bookmarks Service</a></li>
+<li><a href="#add-the-bookmark-type-and-its-query-fields">Add the <code>Bookmark</code> Type and Its Query Fields</a></li>
+<li><a href="#add-a-createbookmark-mutation">Add a <code>createBookmark</code> Mutation</a></li>
+<li><a href="#add-updatebookmark-and-deletebookmark-mutations">Add <code>updateBookmark</code> and <code>deleteBookmark</code> Mutations</a></li>
+<li><a href="#get-recommended-bookmarks-based-on-a-users-interests">Get Recommended Bookmarks Based on a User’s Interests</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="bookmark-management-with-mongodb-and-mongoose">Chapter 6: Bookmark Management with MongoDB and Mongoose</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Create a new subgraph service to contain type definitions for bookmarks</li>
+<li>Create queries and mutations for reading and writing bookmark data to MongoDB</li>
+<li>Use the <code>@requires</code> directive from the Apollo Federation specification to provide additional entity data to an extending subgraph</li>
+<li>Search bookmarks using MongoDB’s full-text search</li>
+</ul>
+</div>
+<h2 id="install-packages-and-configure-mongoose">Install Packages and Configure Mongoose</h2>
+<p>The bookmarks service—our third subgraph—will finally allow users to save and edit bookmarks. For this service, we’ll use MongoDB to persist data again but we’ll maintain separation of concerns and create a separate database to contain bookmark documents. Bookmarks will be connected to the <code>Profile</code> entity that we defined in Chapter 4 by extending that type to include a <code>bookmarks</code> field that will provide a paginated list of a user’s saved bookmarks. The <code>Bookmark</code> type will also have an <code>owner</code> field that will connect it to the profile of the user who created it. Additionally, we’ll add a <code>recommendedBookmarks</code> field to the <code>Profile</code> entity and we’ll end up using an advanced feature of Apollo Federation to resolve this computed entity field.</p>
+<p>Our first step will be creating a <code>bookmarks</code> subdirectory in the root project directory to organize the code for the new service and add a <code>package.json</code> file to it:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/</p>
+</div>
+<div class="highlight"><pre><span></span>npm init --yes
+</pre></div>
+
+<p>Next, we’ll install some familiar core packages for the new subgraph:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i @apollo/subgraph@2.0.3 apollo-datasource@3.3.1 apollo-server@3.7.0 dotenv@16.0.0 graphql@16.5.0 mongoose@6.3.0
+</pre></div>
+
+<p>As well as nodemon to watch for file changes in the development environment:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i -D nodemon@2.0.15
+</pre></div>
+
+<p>And again, we will set the <code>type</code> key to <code>module</code> and add a start script:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/package.json</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">  <span class="s2">&quot;type&quot;</span><span class="o">:</span> <span class="s2">&quot;module&quot;</span><span class="p">,</span>
+</span>  <span class="s2">&quot;scripts&quot;</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="s2">&quot;dev&quot;</span><span class="o">:</span> <span class="s2">&quot;nodemon -r dotenv/config -e env,graphql,js ./src/index.js&quot;</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We’ll want to make use of the <code>DateTime</code> Scalar type, authorization directives, and <code>Pagination</code> class in this service as well, so we’ll run <code>npm link graphql</code> next to reference the <code>graphql</code> package installed in the <code>shared</code> directory only:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/</p>
+</div>
+<div class="highlight"><pre><span></span>npm link graphql
+</pre></div>
+
+<p>Now we need to add a <code>.env</code> file for this service with some familiar environment variables:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/.env</p>
+</div>
+<div class="highlight"><pre><span></span>MONGODB_URL=mongodb://127.0.0.1:27017/marked-bookmarks
+
+NODE_ENV=development
+PORT=4003
+</pre></div>
+
+<p>Note that the <code>MONGODB_URL</code> has a slightly different endpoint than the profiles service because we are creating a separate database for the bookmarks data. We also set the <code>PORT</code> for the subgraph’s GraphQL server endpoint to <code>4003</code>.</p>
+<p>Once again, we’ll need to configure a connection to MongoDB via Mongoose, so we’ll create a <code>src</code> subdirectory in <code>bookmarks</code> and then a <code>config</code> subdirectory inside of <code>src</code> with a <code>mongoose.js</code> file in it with the same code as the one in the profiles service:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/config/mongoose.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">mongoose</span> <span class="nx">from</span> <span class="s2">&quot;mongoose&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initMongoose</span><span class="p">()</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">connectionUrl</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">MONGODB_URL</span><span class="p">;</span>
+  <span class="nx">mongoose</span><span class="p">.</span><span class="nx">connect</span><span class="p">(</span><span class="nx">connectionUrl</span><span class="p">);</span>
+
+  <span class="nx">mongoose</span><span class="p">.</span><span class="nx">connection</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s2">&quot;connected&quot;</span><span class="p">,</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Mongoose default connection ready at </span><span class="si">${</span><span class="nx">connectionUrl</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+  <span class="p">});</span>
+
+  <span class="nx">mongoose</span><span class="p">.</span><span class="nx">connection</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s2">&quot;error&quot;</span><span class="p">,</span> <span class="nx">error</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s2">&quot;Mongoose default connection error:&quot;</span><span class="p">,</span> <span class="nx">error</span><span class="p">);</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initMongoose</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can create a <code>Bookmark</code> model for the collection of bookmark documents. Create a <code>models</code> subdirectory in <code>src</code> and add a <code>Bookmark.js</code> file to that with the following code:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/models/Bookmark.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">mongoose</span> <span class="nx">from</span> <span class="s2">&quot;mongoose&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">bookmarkSchema</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">mongoose</span><span class="p">.</span><span class="nx">Schema</span><span class="p">({</span>
+  <span class="nx">createdAt</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">Date</span><span class="p">,</span>
+    <span class="k">default</span><span class="o">:</span> <span class="nb">Date</span><span class="p">.</span><span class="nx">now</span><span class="p">,</span>
+    <span class="nx">required</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">},</span>
+  <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">String</span><span class="p">,</span>
+    <span class="nx">required</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">},</span>
+  <span class="kr">private</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">Boolean</span><span class="p">,</span>
+    <span class="k">default</span><span class="o">:</span> <span class="kc">false</span><span class="p">,</span>
+    <span class="nx">required</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">},</span>
+  <span class="nx">tags</span><span class="o">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="nx">type</span><span class="o">:</span> <span class="nb">String</span>
+    <span class="p">}</span>
+  <span class="p">],</span>
+  <span class="nx">title</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">String</span>
+  <span class="p">},</span>
+  <span class="nx">url</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">String</span><span class="p">,</span>
+    <span class="nx">required</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">}</span>
+<span class="p">});</span>
+
+<span class="nx">bookmarkSchema</span><span class="p">.</span><span class="nx">index</span><span class="p">({</span> <span class="nx">title</span><span class="o">:</span> <span class="s2">&quot;text&quot;</span> <span class="p">});</span>
+
+<span class="kr">const</span> <span class="nx">Bookmark</span> <span class="o">=</span> <span class="nx">mongoose</span><span class="p">.</span><span class="nx">model</span><span class="p">(</span><span class="s2">&quot;Bookmark&quot;</span><span class="p">,</span> <span class="nx">bookmarkSchema</span><span class="p">);</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">Bookmark</span><span class="p">;</span>
+</pre></div>
+
+<p>The required fields for any bookmark document include the <code>url</code> of the bookmarked page, the <code>ownerAccountId</code> to indicate what user created it by their Auth0 ID, a <code>createdAt</code> time, and <code>private</code> field to indicate whether the user wants this bookmark to be visible via their profile. Optionally, a bookmark can also have a <code>title</code> and <code>tags</code> applied to it.</p>
+<h2 id="scaffold-the-bookmarks-service">Scaffold the Bookmarks Service</h2>
+<p>Now we’re ready to scaffold a few more of the essential files for the bookmarks service. We’ll create an <code>index.js</code> file in the <code>src</code> directory, followed by a <code>graphql</code> subdirectory in <code>bookmarks/src</code> with <code>schema.graphql</code> and <code>resolvers.js</code> files, plus a <code>dataSources</code> subdirectory in there with a <code>BookmarksDataSource.js</code> file in it.</p>
+<p>The current file structure in <code>bookmarks</code> will look like this:</p>
+<div class="highlight"><pre><span></span>bookmarks
+  ├── node_modules/
+  |   └── ...
+  ├── src/
+  |   └── config
+  |       └── mongoose.js
+  |   └── graphql
+  |       └── dataSources
+  |           └── BookmarksDataSource.js
+  |       └── resolvers.js
+  |       └── schema.graphql
+  |   └── models
+  |       └── Bookmark.js  
+  |   └── index.js
+  ├── .env
+  ├── package.json
+  ├── package-lock.json
+</pre></div>
+
+<p>Now we can build out the bookmarks service’s <code>index.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">dirname</span><span class="p">,</span> <span class="nx">resolve</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;path&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">fileURLToPath</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;url&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">readFileSync</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;fs&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">buildSubgraphSchema</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/subgraph&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">authDirectives</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../../shared/src/index.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">Bookmark</span> <span class="nx">from</span> <span class="s2">&quot;./models/Bookmark.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">BookmarksDataSource</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/dataSources/BookmarksDataSource.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">initMongoose</span> <span class="nx">from</span> <span class="s2">&quot;./config/mongoose.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">resolvers</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/resolvers.js&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">__dirname</span> <span class="o">=</span> <span class="nx">dirname</span><span class="p">(</span><span class="nx">fileURLToPath</span><span class="p">(</span><span class="kr">import</span><span class="p">.</span><span class="nx">meta</span><span class="p">.</span><span class="nx">url</span><span class="p">));</span>
+<span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="p">{</span> <span class="nx">authDirectivesTypeDefs</span><span class="p">,</span> <span class="nx">authDirectivesTransformer</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">authDirectives</span><span class="p">();</span>
+<span class="kr">const</span> <span class="nx">subgraphTypeDefs</span> <span class="o">=</span> <span class="nx">readFileSync</span><span class="p">(</span>
+  <span class="nx">resolve</span><span class="p">(</span><span class="nx">__dirname</span><span class="p">,</span> <span class="s2">&quot;./graphql/schema.graphql&quot;</span><span class="p">),</span>
+  <span class="s2">&quot;utf-8&quot;</span>
+<span class="p">);</span>
+<span class="kr">const</span> <span class="nx">typeDefs</span> <span class="o">=</span> <span class="nx">gql</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">subgraphTypeDefs</span><span class="si">}</span><span class="err">\</span><span class="sb">n</span><span class="si">${</span><span class="nx">authDirectivesTypeDefs</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="kd">let</span> <span class="nx">subgraphSchema</span> <span class="o">=</span> <span class="nx">buildSubgraphSchema</span><span class="p">({</span> <span class="nx">typeDefs</span><span class="p">,</span> <span class="nx">resolvers</span> <span class="p">});</span>
+<span class="nx">subgraphSchema</span> <span class="o">=</span> <span class="nx">authDirectivesTransformer</span><span class="p">(</span><span class="nx">subgraphSchema</span><span class="p">);</span>
+
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">schema</span><span class="o">:</span> <span class="nx">subgraphSchema</span><span class="p">,</span>
+  <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+    <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">};</span>
+  <span class="p">},</span>
+  <span class="nx">dataSources</span><span class="o">:</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="p">{</span>
+      <span class="nx">bookmarksAPI</span><span class="o">:</span> <span class="k">new</span> <span class="nx">BookmarksDataSource</span><span class="p">({</span> <span class="nx">Bookmark</span> <span class="p">})</span>
+    <span class="p">};</span>
+  <span class="p">}</span>
+<span class="p">});</span>
+
+<span class="nx">initMongoose</span><span class="p">();</span>
+
+<span class="nx">server</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">}).</span><span class="nx">then</span><span class="p">(({</span> <span class="nx">url</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+  <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Bookmarks service ready at </span><span class="si">${</span><span class="nx">url</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>This set-up should look very familiar as it is nearly identical to the one used for the accounts and profiles services. Next, we’ll add some boilerplate schema code to <code>schema.graphql</code>. We will import both the <code>@key</code> and <code>@shareable</code> directives here for now:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">extend</span> <span class="k">schema</span>
+  <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/federation/v2.0&quot;</span>, 
+        import: <span class="p">[</span><span class="s2">&quot;@key&quot;, &quot;@shareable&quot;</span><span class="p">])</span>
+</pre></div>
+
+<p>And we’ll set up the <code>resolvers.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Next, we’ll add some initial code for the <code>BookmarksDataSource</code> class. Because a user may have many bookmarks, these lists will be paginated so we’ll use the <code>Pagination</code> class here again:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">DataSource</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-datasource&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">Pagination</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../../../../shared/src/index.js&quot;</span><span class="p">;</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="nx">constructor</span><span class="p">({</span> <span class="nx">Bookmark</span> <span class="p">})</span> <span class="p">{</span>
+    <span class="kr">super</span><span class="p">();</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">Bookmark</span> <span class="o">=</span> <span class="nx">Bookmark</span><span class="p">;</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">pagination</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">Pagination</span><span class="p">(</span><span class="nx">Bookmark</span><span class="p">);</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can jump over to the gateway and add an environment variable for the bookmarks service’s endpoint:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/.env</p>
+</div>
+<div class="highlight"><pre><span></span># ...
+
+ACCOUNTS_ENDPOINT=http://localhost:4001
+PROFILES_ENDPOINT=http://localhost:4002
+<span class="hll">BOOKMARKS_ENDPOINT=http://localhost:4003
+</span></pre></div>
+
+<p>Next, we’ll update the gateway configuration by adding the new subgraph schema to it:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+    <span class="nx">supergraphSdl</span><span class="o">:</span> <span class="k">new</span> <span class="nx">IntrospectAndCompose</span><span class="p">({</span>
+      <span class="nx">subgraphs</span><span class="o">:</span> <span class="p">[</span>
+        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;accounts&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">ACCOUNTS_ENDPOINT</span> <span class="p">},</span>
+<span class="hll">        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;profiles&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PROFILES_ENDPOINT</span> <span class="p">},</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;bookmarks&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">BOOKMARKS_ENDPOINT</span> <span class="p">}</span>
+</span>      <span class="p">],</span>
+      <span class="nx">pollIntervalInMs</span><span class="o">:</span> <span class="mi">1000</span>
+    <span class="p">}),</span>
+    <span class="c1">// ...</span>
+  <span class="p">});</span>
+
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>The new bookmarks service can be started at this point but it won’t do much yet. In the next section, we’ll add types and resolvers to the new subgraph schema so we can test out the service.</p>
+<h2 id="add-the-bookmark-type-and-its-query-fields">Add the <code>Bookmark</code> Type and Its Query Fields</h2>
+<p>The first type we add to the bookmarks service’s schema will be the custom <code>DateTime</code> Scalar. We’ll use it to ensure the <code>createdAt</code> time for a bookmark is a valid ISO 8601 date string:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">An ISO 8601-encoded UTC date string.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="k">scalar</span> <span class="k">DateTime</span>
+</span></pre></div>
+
+<p>Thinking one step ahead to when we’ll add the <code>Bookmark</code> type, there will be an <code>url</code> field on that type that we could set to a generic <code>String</code> output type, but it would be better if we could bake some validation of this URL string directly into the schema. To do that, we’ll add an <code>URL</code> custom Scalar type to our shared type definitions. Create a file called <code>URLType.js</code> in <code>shared/src/scalars</code> and add the following code to it:</p>
+<p></p>
+<div class="code-context">
+<p>shared/src/scalars/URLType.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">GraphQLScalarType</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;graphql&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">validator</span> <span class="nx">from</span> <span class="s2">&quot;validator&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">URLType</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">GraphQLScalarType</span><span class="p">({</span>
+  <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;URL&quot;</span><span class="p">,</span>
+  <span class="nx">description</span><span class="o">:</span> <span class="s2">&quot;A well-formed URL string.&quot;</span><span class="p">,</span>
+  <span class="nx">parseValue</span><span class="o">:</span> <span class="nx">value</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nx">validator</span><span class="p">.</span><span class="nx">isURL</span><span class="p">(</span><span class="nx">value</span><span class="p">))</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">value</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">throw</span> <span class="k">new</span> <span class="nx">ApolloError</span><span class="p">(</span><span class="s2">&quot;String must be a valid URL including a protocol&quot;</span><span class="p">);</span>
+  <span class="p">},</span>
+  <span class="nx">serialize</span><span class="o">:</span> <span class="nx">value</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nx">validator</span><span class="p">.</span><span class="nx">isURL</span><span class="p">(</span><span class="nx">value</span><span class="p">))</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">value</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">throw</span> <span class="k">new</span> <span class="nx">ApolloError</span><span class="p">(</span><span class="s2">&quot;String must be a valid URL including a protocol&quot;</span><span class="p">);</span>
+  <span class="p">},</span>
+  <span class="nx">parseLiteral</span><span class="o">:</span> <span class="nx">ast</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="k">if</span> <span class="p">(</span><span class="nx">validator</span><span class="p">.</span><span class="nx">isURL</span><span class="p">(</span><span class="nx">ast</span><span class="p">.</span><span class="nx">value</span><span class="p">))</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">ast</span><span class="p">.</span><span class="nx">value</span><span class="p">;</span>
+    <span class="p">}</span>
+    <span class="k">throw</span> <span class="k">new</span> <span class="nx">ApolloError</span><span class="p">(</span><span class="s2">&quot;String must be a valid URL including a protocol&quot;</span><span class="p">);</span>
+  <span class="p">}</span>
+<span class="p">});</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">URLType</span><span class="p">;</span>
+</pre></div>
+
+<p>As we can see, this logic to handle this custom Scalar type is very similar to <code>Datetime</code> because we use the <code>validator</code> package again, but here we use it to determine that the supplied string matches an URL-like pattern. We also have to export this new type definition from the module’s main <code>index.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>shared/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">authDirectives</span> <span class="nx">from</span> <span class="s2">&quot;./directives/authDirectives.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">DateTimeType</span> <span class="nx">from</span> <span class="s2">&quot;./scalars/DateTypeType.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">Pagination</span> <span class="nx">from</span> <span class="s2">&quot;./utils/Pagination.js&quot;</span><span class="p">;</span>
+<span class="hll"><span class="kr">import</span> <span class="nx">URLType</span> <span class="nx">from</span> <span class="s2">&quot;./scalars/URLType.js&quot;</span><span class="p">;</span>
+</span>
+<span class="hll"><span class="kr">export</span> <span class="p">{</span> <span class="nx">authDirectives</span><span class="p">,</span> <span class="nx">DateTimeType</span><span class="p">,</span> <span class="nx">Pagination</span><span class="p">,</span> <span class="nx">URLType</span> <span class="p">};</span>
+</span></pre></div>
+
+<p>Now we can use the <code>URL</code> Scalar type in the bookmarks service’s schema and define the <code>Bookmark</code> Object type:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">A well-formatted URL string.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="k">scalar</span> <span class="k">URL</span>
+</span><span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">A bookmark contains content authored by a user.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">Bookmark</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The unique ID of the bookmark.&quot;</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The date and time the bookmark was created.&quot;</span>
+</span><span class="hll">  createdAt: <span class="k">DateTime</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;Whether a bookmark has been marked as private.&quot;</span>
+</span><span class="hll">  private: <span class="k">Boolean</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;User-applied tags for the bookmark.&quot;</span>
+</span><span class="hll">  tags: <span class="p">[</span><span class="k">String</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;A title to describe the bookmarked content.&quot;</span>
+</span><span class="hll">  title: <span class="k">String</span>
+</span><span class="hll">  <span class="s2">&quot;The URL of the page to be bookmarked.&quot;</span>
+</span><span class="hll">  url: <span class="k">URL</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>We haven’t connected the <code>Bookmark</code> to the user who owns it yet, but we’ll address that shortly. For now, let’s focus on adding bookmark-related fields on the root <code>Query</code> type as well as the types required for paginating lists of bookmarks. Just like profiles, we’ll need to add <code>BookmarkConnection</code> and <code>BookmarkEdge</code> Object types and a <code>BookmarkOrderBy</code> Enum type to support Relay-style pagination for bookmark lists. We also need to redefine the <code>PageInfo</code> value type here, and once again, we will need to include the <code>@shareable</code> directive on it:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Sorting options for bookmark connections.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="k">enum</span> <span class="k">BookmarkOrderBy</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;Order bookmarks ascending by creation time.&quot;</span>
+</span><span class="hll">  <span class="k">CREATED_AT_ASC</span>
+</span><span class="hll">  <span class="s2">&quot;Order bookmarks descending by creation time.&quot;</span>
+</span><span class="hll">  <span class="k">CREATED_AT_DESC</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">A list of bookmark edges with pagination information.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">BookmarkConnection</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;A list of bookmark edges.&quot;</span>
+</span><span class="hll">  edges: <span class="p">[</span><span class="k">BookmarkEdge</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;Information to assist with pagination.&quot;</span>
+</span><span class="hll">  pageInfo: <span class="k">PageInfo</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">A single bookmark node with its cursor.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">BookmarkEdge</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;A cursor for use in pagination.&quot;</span>
+</span><span class="hll">  cursor: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;A bookmark at the end of an edge.&quot;</span>
+</span><span class="hll">  node: <span class="k">Bookmark</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Information about pagination in a connection.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">PageInfo</span> <span class="kt">@shareable</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The cursor to continue from when paginating forward.&quot;</span>
+</span><span class="hll">  endCursor: <span class="k">String</span>
+</span><span class="hll">  <span class="s2">&quot;Whether there are more items when paginating forward.&quot;</span>
+</span><span class="hll">  hasNextPage: <span class="k">Boolean</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;Whether there are more items when paginating backward.&quot;</span>
+</span><span class="hll">  hasPreviousPage: <span class="k">Boolean</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The cursor to continue from them paginating backward.&quot;</span>
+</span><span class="hll">  startCursor: <span class="k">String</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>Now we can define <code>Query</code> fields for retrieving a single bookmark by its ID and searching for relevant bookmarks based on a user-provided search string:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="kt">type</span> <span class="k">Query</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;Retrieves a single bookmark by ID.&quot;</span>
+</span><span class="hll">  <span class="k">bookmark</span><span class="p">(</span>id: <span class="k">ID</span><span class="p">!):</span> <span class="k">Bookmark</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;Provides a search string to query relevant bookmarks.&quot;</span>
+</span><span class="hll">  <span class="k">searchBookmarks</span><span class="p">(</span>
+</span><span class="hll">    after: <span class="k">String</span>
+</span><span class="hll">    first: <span class="k">Int</span>
+</span><span class="hll">    <span class="s2">&quot;The text string to search for in bookmark title.&quot;</span>
+</span><span class="hll">    query: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll">  <span class="p">):</span> <span class="k">BookmarkConnection</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>Note that none of the bookmark queries will require authentication to view the data, so the data for any bookmark will be publicly queryable unless it has been marked as <code>private</code> by the owner. This will allow an unauthenticated user to search for bookmarks in Marked as long as they don’t try to retrieve information about the bookmark’s owner. Other users’ data will not be accessible to unauthenticated users when they use a bookmark as an entry point to the API because the reference resolvers for the <code>Account</code> and <code>Profile</code> types check for a valid access token in the <code>context</code>.</p>
+<p>Now we’ll connect a bookmark to the user who created it in our schema. To do that, we’ll add an <code>owner</code> field to the <code>Bookmark</code> type with an output type of <code>Profile</code>. To use the <code>Profile</code> entity in this subgraphs schema we will need to stub out the <code>Profile</code> type here as well:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">A bookmark contains content authored by a user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="kt">type</span> <span class="k">Bookmark</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;The profile of the user who authored the bookmark.&quot;</span>
+</span><span class="hll">  owner: <span class="k">Profile</span><span class="p">!</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">A profile contains metadata about a specific user.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">Profile</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>But wait! In Chapter 4, we defined the <code>Profile</code> entity and set the <code>fields</code> argument of the <code>@key</code> directive to <code>id</code>, just as we did for the <code>Account</code> entity. This approach made sense if we think about the entity’s key field as acting like a primary key that we can use to identify a unique profile, which would be the MongoDB document ID in this case. However, based on the <code>Bookmark</code> model we previously defined for the bookmarks collection in this service’s database, a bookmark will only know about its owner’s Auth0 field via the <code>ownerAccountId</code> field in the document.</p>
+<p>Luckily, the profile documents also have the user’s unique Auth0 ID saved in a field, so we can use this value to bridge the gap between the <code>ownerAccountId</code> field in a bookmark document and the relevant profile document to connect the <code>Bookmark</code> and <code>Profile</code> types. Apollo Federation can accommodate exactly this kind of scenario with an advanced feature that allows multiple <code>@key</code> directives to be applied to an entity type. What’s more, it also supports compound keys so we can refer to the <code>id</code> field that’s nested within the <code>account</code> field on the <code>Profile</code> type.</p>
+<p>We’ll need to make a small adjustment in the profiles services to support <code>Profile</code> entity resolution via an Auth0 ID. First, we’ll update the <code>schema.graphql</code> file to include an additional <code>@key</code> directive:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">A profile contains metadata about a specific user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="hll"><span class="kt">type</span> <span class="k">Profile</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;) @key(fields: &quot;account { id }&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>Additionally, we must update the reference resolver for the <code>Profile</code> type in this service to handle representations that include either the profile document’s ID or the Auth0 ID:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+   <span class="nx">Profile</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">__resolveReference</span><span class="p">(</span><span class="nx">reference</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">if</span> <span class="p">(</span><span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span><span class="p">)</span> <span class="p">{</span>
+<span class="hll">        <span class="k">return</span> <span class="nx">reference</span><span class="p">.</span><span class="nx">id</span>
+</span><span class="hll">          <span class="o">?</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getProfileById</span><span class="p">(</span><span class="nx">reference</span><span class="p">.</span><span class="nx">id</span><span class="p">)</span>
+</span><span class="hll">          <span class="o">:</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getProfile</span><span class="p">({</span>
+</span><span class="hll">              <span class="nx">accountId</span><span class="o">:</span> <span class="nx">reference</span><span class="p">.</span><span class="nx">account</span><span class="p">.</span><span class="nx">id</span>
+</span><span class="hll">            <span class="p">});</span>
+</span>      <span class="p">}</span>
+      <span class="k">throw</span> <span class="k">new</span> <span class="nx">ApolloError</span><span class="p">(</span><span class="s2">&quot;Not authorized!&quot;</span><span class="p">);</span>
+    <span class="p">},</span>
+    <span class="c1">// ...</span>
+  <span class="p">},</span>
+
+  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can revise the <code>Profile</code> definition back in the bookmarks service and use the account-related key instead. And because we use the <code>Account</code> type as an output type for the <code>account</code> field here, we must also stub out that entity in this subgraph schema:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">An account is a unique Auth0 user.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">Account</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">A profile contains metadata about a specific user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="hll"><span class="kt">type</span> <span class="k">Profile</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;account { id }&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  account: <span class="k">Account</span>
+</span><span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>As previously mentioned, we want to be able to traverse the graph in both directions so we can retrieve a paginated list of bookmarks owned by a particular user, so we’ll extend the <code>Profile</code> type with an additional field next:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">A profile contains metadata about a specific user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="kt">type</span> <span class="k">Profile</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;account { id }&quot;</span><span class="p">)</span> <span class="p">{</span>
+  id: <span class="k">ID</span><span class="p">!</span>
+<span class="hll">  <span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">  A list of bookmarks created by the user.</span>
+</span><span class="hll">
+</span><span class="hll"><span class="c c-Multi">  Private bookmarks will be hidden for non-owners.</span>
+</span><span class="hll"><span class="c c-Multi">  &quot;&quot;&quot;</span>
+</span><span class="hll">  <span class="k">bookmarks</span><span class="p">(</span>
+</span><span class="hll">    after: <span class="k">String</span>
+</span><span class="hll">    before: <span class="k">String</span>
+</span><span class="hll">    first: <span class="k">Int</span>
+</span><span class="hll">    last: <span class="k">Int</span>
+</span><span class="hll">    orderBy: <span class="k">BookmarkOrderBy</span> <span class="p">=</span> <span class="k">CREATED_AT_ASC</span>
+</span><span class="hll">  <span class="p">):</span> <span class="k">BookmarkConnection</span>
+</span><span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>With the bookmark type definitions ready to go we can begin writing methods in the <code>BookmarksDataSource</code> to assist with field resolution. First, we’ll add a <code>getBookmarkById</code> method to get a single bookmark by its document ID. When we retrieve any bookmark we need to be aware of who is requesting it to validate whether they own it and are allowed to view it if it’s flagged as private. We check this condition by using MongoDB’s <code>$or</code> operator:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">
+</span><span class="hll">  <span class="nx">getBookmarkById</span><span class="p">(</span><span class="nx">id</span><span class="p">,</span> <span class="nx">userId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">Bookmark</span><span class="p">.</span><span class="nx">findOne</span><span class="p">({</span>
+</span><span class="hll">      <span class="nx">$or</span><span class="o">:</span> <span class="p">[</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">_id</span><span class="o">:</span> <span class="nx">id</span><span class="p">,</span> <span class="kr">private</span><span class="o">:</span> <span class="kc">false</span> <span class="p">},</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">_id</span><span class="o">:</span> <span class="nx">id</span><span class="p">,</span> <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">userId</span> <span class="p">}</span>
+</span><span class="hll">      <span class="p">]</span>
+</span><span class="hll">    <span class="p">}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Next, we’ll add a <code>_getBookmarkSort</code> method to assist with sorting, as well as a <code>getUserBookmarks</code> method to fetch bookmarks for a specific user. Again, we selectively show private bookmarks if an authenticated user has triggered the request and they are querying a list of their bookmarks:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">_getBookmarkSort</span><span class="p">(</span><span class="nx">sortEnum</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kd">let</span> <span class="nx">sort</span> <span class="o">=</span> <span class="p">{};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">sortArgs</span> <span class="o">=</span> <span class="nx">sortEnum</span><span class="p">.</span><span class="nx">split</span><span class="p">(</span><span class="s2">&quot;_&quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">direction</span> <span class="o">=</span> <span class="nx">sortArgs</span><span class="p">.</span><span class="nx">pop</span><span class="p">();</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">field</span> <span class="o">=</span> <span class="nx">sortArgs</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">arg</span> <span class="p">=&gt;</span> <span class="nx">arg</span><span class="p">.</span><span class="nx">toLowerCase</span><span class="p">())</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">map</span><span class="p">((</span><span class="nx">arg</span><span class="p">,</span> <span class="nx">i</span><span class="p">)</span> <span class="p">=&gt;</span>
+</span><span class="hll">        <span class="nx">i</span> <span class="o">===</span> <span class="mi">0</span> <span class="o">?</span> <span class="nx">arg</span> <span class="o">:</span> <span class="nx">arg</span><span class="p">.</span><span class="nx">charAt</span><span class="p">(</span><span class="mi">0</span><span class="p">).</span><span class="nx">toUpperCase</span><span class="p">()</span> <span class="o">+</span> <span class="nx">arg</span><span class="p">.</span><span class="nx">slice</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+</span><span class="hll">      <span class="p">)</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">join</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="nx">sort</span><span class="p">[</span><span class="nx">field</span><span class="p">]</span> <span class="o">=</span> <span class="nx">direction</span> <span class="o">===</span> <span class="s2">&quot;DESC&quot;</span> <span class="o">?</span> <span class="o">-</span><span class="mi">1</span> <span class="o">:</span> <span class="mi">1</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="nx">sort</span><span class="p">;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">async</span> <span class="nx">getUserBookmarks</span><span class="p">(</span>
+</span><span class="hll">    <span class="nx">accountId</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">userId</span><span class="p">,</span>
+</span><span class="hll">    <span class="p">{</span> <span class="nx">after</span><span class="p">,</span> <span class="nx">before</span><span class="p">,</span> <span class="nx">first</span><span class="p">,</span> <span class="nx">last</span><span class="p">,</span> <span class="nx">orderBy</span> <span class="p">}</span>
+</span><span class="hll">  <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">sort</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">_getBookmarkSort</span><span class="p">(</span><span class="nx">orderBy</span><span class="p">);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">filter</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">$or</span><span class="o">:</span> <span class="p">[</span>
+</span><span class="hll">        <span class="p">{</span> <span class="kr">private</span><span class="o">:</span> <span class="kc">false</span><span class="p">,</span> <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">accountId</span> <span class="p">},</span>
+</span><span class="hll">        <span class="p">{</span>
+</span><span class="hll">          <span class="nx">$and</span><span class="o">:</span> <span class="p">[</span>
+</span><span class="hll">            <span class="p">{</span> <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">accountId</span> <span class="p">},</span>
+</span><span class="hll">            <span class="p">{</span> <span class="nx">$expr</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$eq</span><span class="o">:</span> <span class="p">[</span><span class="s2">&quot;$ownerAccountId&quot;</span><span class="p">,</span> <span class="nx">userId</span><span class="p">]</span> <span class="p">}</span> <span class="p">}</span>
+</span><span class="hll">          <span class="p">]</span>
+</span><span class="hll">        <span class="p">}</span>
+</span><span class="hll">      <span class="p">]</span>
+</span><span class="hll">    <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">queryArgs</span> <span class="o">=</span> <span class="p">{</span> <span class="nx">after</span><span class="p">,</span> <span class="nx">before</span><span class="p">,</span> <span class="nx">first</span><span class="p">,</span> <span class="nx">last</span><span class="p">,</span> <span class="nx">filter</span><span class="p">,</span> <span class="nx">sort</span> <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">edges</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">pagination</span><span class="p">.</span><span class="nx">getEdges</span><span class="p">(</span><span class="nx">queryArgs</span><span class="p">);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">pageInfo</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">pagination</span><span class="p">.</span><span class="nx">getPageInfo</span><span class="p">(</span><span class="nx">edges</span><span class="p">,</span> <span class="nx">queryArgs</span><span class="p">);</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="p">{</span> <span class="nx">edges</span><span class="p">,</span> <span class="nx">pageInfo</span> <span class="p">};</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Lastly, we’ll add a <code>searchBookmarks</code> method to support full-text bookmark search that tailors the results based on an authenticated user:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">
+</span><span class="hll">  <span class="nx">async</span> <span class="nx">searchBookmarks</span><span class="p">(</span><span class="nx">userId</span><span class="p">,</span> <span class="p">{</span> <span class="nx">after</span><span class="p">,</span> <span class="nx">first</span><span class="p">,</span> <span class="nx">searchString</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">sort</span> <span class="o">=</span> <span class="p">{</span> <span class="nx">score</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$meta</span><span class="o">:</span> <span class="s2">&quot;textScore&quot;</span> <span class="p">},</span> <span class="nx">_id</span><span class="o">:</span> <span class="o">-</span><span class="mi">1</span> <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">filter</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">$and</span><span class="o">:</span> <span class="p">[</span>
+</span><span class="hll">        <span class="p">{</span>
+</span><span class="hll">          <span class="nx">$text</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$search</span><span class="o">:</span> <span class="nx">searchString</span> <span class="p">},</span>
+</span><span class="hll">          <span class="nx">$or</span><span class="o">:</span> <span class="p">[{</span> <span class="kr">private</span><span class="o">:</span> <span class="kc">false</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">userId</span> <span class="p">}]</span>
+</span><span class="hll">        <span class="p">}</span>
+</span><span class="hll">      <span class="p">]</span>
+</span><span class="hll">    <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">queryArgs</span> <span class="o">=</span> <span class="p">{</span> <span class="nx">after</span><span class="p">,</span> <span class="nx">first</span><span class="p">,</span> <span class="nx">filter</span><span class="p">,</span> <span class="nx">sort</span> <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">edges</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">pagination</span><span class="p">.</span><span class="nx">getEdges</span><span class="p">(</span><span class="nx">queryArgs</span><span class="p">);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">pageInfo</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">pagination</span><span class="p">.</span><span class="nx">getPageInfo</span><span class="p">(</span><span class="nx">edges</span><span class="p">,</span> <span class="nx">queryArgs</span><span class="p">);</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="p">{</span> <span class="nx">edges</span><span class="p">,</span> <span class="nx">pageInfo</span> <span class="p">};</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<div class="boxout">
+<p>The search query above won’t account for duplicate URLs that have been saved by multiple users. If you would like to implement an advanced implementation of this query, it could be achieved using another aggregation here instead.</p>
+</div>
+<p>Now that these methods are ready to go, we can finally write our resolvers. We’ll start with the <code>Query</code> resolvers:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="hll"><span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">async</span> <span class="nx">bookmark</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">id</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">userId</span> <span class="o">=</span> <span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span> <span class="o">?</span> <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">bookmark</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">getBookmarkById</span><span class="p">(</span>
+</span><span class="hll">        <span class="nx">id</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">userId</span>
+</span><span class="hll">      <span class="p">);</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nx">bookmark</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;Bookmark not available.&quot;</span><span class="p">);</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">return</span> <span class="nx">bookmark</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">searchBookmarks</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">after</span><span class="p">,</span> <span class="nx">first</span><span class="p">,</span> <span class="nx">query</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">userId</span> <span class="o">=</span> <span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span> <span class="o">?</span> <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">      
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">searchBookmarks</span><span class="p">(</span><span class="nx">userId</span><span class="p">,</span> <span class="p">{</span>
+</span><span class="hll">        <span class="nx">after</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">first</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">searchString</span><span class="o">:</span> <span class="nx">query</span>
+</span><span class="hll">      <span class="p">});</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">};</span>
+</span>
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Next, we’ll write the field resolvers for the <code>Bookmark</code> type. Notice that the <code>owner</code> field resolver will need to return a representation of the <code>Profile</code> type in the shape of the nested key field:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+<span class="hll">  <span class="nx">Bookmark</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">id</span><span class="p">(</span><span class="nx">bookmark</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">bookmark</span><span class="p">.</span><span class="nx">_id</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">owner</span><span class="p">(</span><span class="nx">bookmark</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="p">{</span> <span class="nx">account</span><span class="o">:</span> <span class="p">{</span> <span class="nx">id</span><span class="o">:</span> <span class="nx">bookmark</span><span class="p">.</span><span class="nx">ownerAccountId</span> <span class="p">}</span> <span class="p">};</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">},</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>We also need to write a field resolver for the <code>bookmarks</code> field in the extended <code>Profile</code> type:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">Profile</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">bookmarks</span><span class="p">(</span><span class="nx">profile</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">userId</span> <span class="o">=</span> <span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span> <span class="o">?</span> <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">      
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">getUserBookmarks</span><span class="p">(</span>
+</span><span class="hll">        <span class="nx">profile</span><span class="p">.</span><span class="nx">account</span><span class="p">.</span><span class="nx">id</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">userId</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">args</span>
+</span><span class="hll">      <span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">  <span class="p">},</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Lastly, we’ll add the import for the <code>DateTimeType</code> and <code>URLType</code> resolvers at the top of <code>resolvers.js</code> so we can use them to resolve the custom Scalar types in this schema:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">DateTimeType</span><span class="p">,</span> <span class="nx">URLType</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../../../shared/src/index.js&quot;</span><span class="p">;</span>
+</span>
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+<span class="hll">  <span class="nx">DateTime</span><span class="o">:</span> <span class="nx">DateTimeType</span><span class="p">,</span>
+</span><span class="hll">  <span class="nx">URL</span><span class="o">:</span> <span class="nx">URLType</span><span class="p">,</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>We’re almost ready to test our bookmark-related queries now, but before we can do that we need to add some bookmarks to the database. For that, we’ll need a <code>createBookmark</code> mutation.</p>
+<h2 id="add-a-createbookmark-mutation">Add a <code>createBookmark</code> Mutation</h2>
+<p>It’s time to add some documents to the bookmarks service’s database. The <code>createBookmark</code> mutation will use an Input Object type for an argument, so we’ll create that first:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to create a bookmark.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">CreateBookmarkInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The Auth0 ID of the user who created the bookmark.&quot;</span>
+</span><span class="hll">  ownerAccountId: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;Whether a bookmark should be marked as private.&quot;</span>
+</span><span class="hll">  private: <span class="k">Boolean</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;User-applied tags for the bookmark.&quot;</span>
+</span><span class="hll">  tags: <span class="p">[</span><span class="k">String</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;The title of the page to be bookmarked.&quot;</span>
+</span><span class="hll">  title: <span class="k">String</span>
+</span><span class="hll">  <span class="s2">&quot;The URL of the page to be bookmarked.&quot;</span>
+</span><span class="hll">  url: <span class="k">URL</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>To create a new bookmark we only require the Auth0 ID of the owner’s account and the URL of the page. The rest of the fields will be nullable. The <code>createBookmark</code> mutation will look like this:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;Creates a new bookmark.&quot;</span>
+</span><span class="hll">  <span class="k">createBookmark</span><span class="p">(</span>input: <span class="k">CreateBookmarkInput</span><span class="p">!):</span> <span class="k">Bookmark</span><span class="p">!</span> 
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.ownerAccountId&quot;</span><span class="p">)</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>Now we can write a <code>createBookmark</code> method in the <code>BookmarksDataSource</code> class. As with the tag-like strings that we formatted for the <code>interests</code> field in the profile documents, we will standardize the string formats for the list of bookmark <code>tags</code> that a user provides using a similar <code>_formatTags</code> helper. When creating a bookmark, we want to ensure that a user only creates a bookmark for a particular URL once, so before we write the new bookmark to the database we first check if we can match another document on the <code>ownerAccountId</code> and <code>url</code> fields. We’ll throw an error if one is found, but otherwise, we’ll proceed with creating the new bookmark document:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">_formatTags</span><span class="p">(</span><span class="nx">tags</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="nx">tags</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">tag</span> <span class="p">=&gt;</span> <span class="nx">tag</span><span class="p">.</span><span class="nx">replace</span><span class="p">(</span><span class="sr">/\s+/g</span><span class="p">,</span> <span class="s2">&quot;-&quot;</span><span class="p">).</span><span class="nx">toLowerCase</span><span class="p">());</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">async</span> <span class="nx">createBookmark</span><span class="p">(</span><span class="nx">bookmark</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">existingBookmarkForUrl</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Bookmark</span><span class="p">.</span><span class="nx">findOne</span><span class="p">({</span>
+</span><span class="hll">      <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">bookmark</span><span class="p">.</span><span class="nx">ownerAccountId</span><span class="p">,</span>
+</span><span class="hll">      <span class="nx">url</span><span class="o">:</span> <span class="nx">bookmark</span><span class="p">.</span><span class="nx">url</span>
+</span><span class="hll">    <span class="p">}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">existingBookmarkForUrl</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;A bookmark for the URL already exists.&quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">bookmark</span><span class="p">.</span><span class="nx">tags</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">formattedTags</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">_formatTags</span><span class="p">(</span><span class="nx">bookmark</span><span class="p">.</span><span class="nx">tags</span><span class="p">);</span>
+</span><span class="hll">      <span class="nx">bookmark</span><span class="p">.</span><span class="nx">tags</span> <span class="o">=</span> <span class="nx">formattedTags</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">newBookmark</span> <span class="o">=</span> <span class="k">new</span> <span class="k">this</span><span class="p">.</span><span class="nx">Bookmark</span><span class="p">(</span><span class="nx">bookmark</span><span class="p">);</span>
+</span><span class="hll">    <span class="k">return</span> <span class="nx">newBookmark</span><span class="p">.</span><span class="nx">save</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>We’ll use this data source method in a new <code>createBookmark</code> resolver:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">  <span class="p">},</span>
+</span>
+<span class="hll">  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">createBookmark</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">createBookmark</span><span class="p">(</span><span class="nx">input</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we’re ready to test out the new mutation in Explorer:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">CreateBookmark</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">CreateBookmarkInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">createBookmark</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">createdAt</span>
+    <span class="k">private</span>
+    <span class="k">tags</span>
+    <span class="k">title</span>
+    <span class="k">url</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;ownerAccountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">false</span><span class="p">,</span>
+    <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;graphql&quot;</span><span class="p">],</span>
+    <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;GraphQL specification&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://spec.graphql.org/&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;createBookmark&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;626367bbb1e459abac5eb08e&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-22T13:24:03.755Z&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">false</span><span class="p">,</span>
+      <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="s2">&quot;graphql&quot;</span>
+      <span class="p">],</span>
+      <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;GraphQL specification&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://spec.graphql.org/&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>With one bookmark in the database, we can test out the <code>bookmark</code> query now. This will be our first operation that spans all three subgraphs:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Bookmark</span><span class="p">(</span><span class="nv">$id</span><span class="p">:</span> <span class="k">ID</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">bookmark</span><span class="p">(</span>id: <span class="nv">$id</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">title</span>
+    <span class="k">url</span>
+    <span class="k">owner</span> <span class="p">{</span>
+      <span class="k">username</span>
+      <span class="k">account</span> <span class="p">{</span>
+        <span class="k">email</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;626300d3d1cff70555d1f61f&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;bookmark&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;GraphQL Specification&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://spec.graphql.org/&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;owner&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+          <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot@markedmail.com&quot;</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>As we can see from the gateway’s query plan, there are three hops required to fully resolve all of the fields for this operation. The gateway’s first trip is to the bookmarks service. After all of the <code>Bookmark</code> fields are resolved, it sends parallel requests to the profiles and accounts services to resolve the remaining user-related fields:</p>
+<p></p>
+<div class="code-context">
+<p>Query Plan</p>
+</div>
+<div class="highlight"><pre><span></span>QueryPlan {
+  Sequence {
+    Fetch(service: &quot;bookmarks&quot;) {
+      {
+        bookmark(id: $bookmarkId) {
+          title
+          url
+          owner {
+            __typename
+            account {
+              __typename
+              id
+            }
+          }
+        }
+      }
+    },
+    Parallel {
+      Flatten(path: &quot;bookmark.owner&quot;) {
+        Fetch(service: &quot;profiles&quot;) {
+          {
+            ... on Profile {
+              __typename
+              account {
+                id
+              }
+            }
+          } =&gt;
+          {
+            ... on Profile {
+              username
+            }
+          }
+        },
+      },
+      Flatten(path: &quot;bookmark.owner.account&quot;) {
+        Fetch(service: &quot;accounts&quot;) {
+          {
+            ... on Account {
+              __typename
+              id
+            }
+          } =&gt;
+          {
+            ... on Account {
+              email
+            }
+          }
+        },
+      },
+    },
+  },
+}
+</pre></div>
+
+<p>Add a few more bookmarks using the <code>createBookmark</code> mutation now for at least two different users. Make sure that some of those bookmarks are set to private so we can verify MongoDB’s filtering logic for an authenticated user. Now try running the <code>profile</code> query again with the <code>bookmarks</code> field add to the operation document:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Profile</span><span class="p">(</span><span class="nv">$username</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">profile</span><span class="p">(</span>username: <span class="nv">$username</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">username</span>
+    <span class="k">bookmarks</span><span class="p">(</span>first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+      <span class="k">edges</span> <span class="p">{</span>
+        <span class="k">node</span> <span class="p">{</span>
+          <span class="k">private</span>
+          <span class="k">tags</span>
+          <span class="k">title</span>
+          <span class="k">url</span>
+        <span class="p">}</span>
+      <span class="p">}</span> 
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">10</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;profile&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;bookmarks&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="nt">&quot;edges&quot;</span><span class="p">:</span> <span class="p">[</span>
+          <span class="p">{</span>
+            <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">true</span><span class="p">,</span>
+              <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;graphql&quot;</span><span class="p">,</span> <span class="s2">&quot;caching&quot;</span><span class="p">],</span>
+              <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Caching &amp; GraphQL: Setting the Story Straight&quot;</span><span class="p">,</span>
+              <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://youtu.be/CV3puKM_G14/&quot;</span>
+            <span class="p">}</span>
+          <span class="p">},</span>
+          <span class="p">{</span>
+            <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">false</span><span class="p">,</span>
+              <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;graphql&quot;</span><span class="p">,</span> <span class="s2">&quot;apollo&quot;</span><span class="p">],</span>
+              <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Apollo Federation docs&quot;</span><span class="p">,</span>
+              <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://www.apollographql.com/docs/federation/&quot;</span>
+            <span class="p">}</span>
+          <span class="p">},</span>
+          <span class="p">{</span>
+            <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">false</span><span class="p">,</span>
+              <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="s2">&quot;graphql&quot;</span>
+              <span class="p">],</span>
+              <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;GraphQL Specification&quot;</span><span class="p">,</span>
+              <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://spec.graphql.org/&quot;</span>
+            <span class="p">}</span>
+          <span class="p">}</span>
+        <span class="p">]</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Be sure to verify that you can’t see any private bookmarks in the result when you rerun the operation with another user’s JWT in the <code>Authorization</code> header.</p>
+<p>Lastly, we’ll test out the <code>searchQuery</code>:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">SearchBookmarks</span><span class="p">(</span><span class="nv">$query</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">searchBookmarks</span><span class="p">(</span>query: <span class="nv">$query</span>, first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">createdAt</span>
+        <span class="k">private</span>
+        <span class="k">tags</span>
+        <span class="k">title</span>
+        <span class="k">url</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;GraphQL&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">10</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;searchBookmarks&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;edges&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-22T19:24:03.755Z&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">false</span><span class="p">,</span>
+            <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+              <span class="s2">&quot;graphql&quot;</span>
+            <span class="p">],</span>
+            <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;GraphQL Specification&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://spec.graphql.org/&quot;</span>
+          <span class="p">}</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-22T19:45:54.568Z&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">false</span><span class="p">,</span>
+            <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+              <span class="s2">&quot;graphql&quot;</span>
+            <span class="p">],</span>
+            <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Life of a GraphQL Query — Validation&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://medium.com/@cjoudrey/life-of-a-graphql-query-validation-18a8fb52f1898&quot;</span>
+          <span class="p">}</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-22T19:45:24.867Z&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;private&quot;</span><span class="p">:</span> <span class="kc">false</span><span class="p">,</span>
+            <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+              <span class="s2">&quot;graphql&quot;</span>
+            <span class="p">],</span>
+            <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Life of a GraphQL Query — Lexing/Parsing&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://medium.com/@cjoudrey/life-of-a-graphql-query-lexing-parsing-ca7c5045fad8&quot;</span>
+          <span class="p">}</span>
+        <span class="p">}</span>
+      <span class="p">]</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>For the search query, be sure to confirm that the visibility of private bookmarks changes as expected when swapping the authenticated user’s JWT and also removing the <code>Authorization</code> header entirely.</p>
+<h2 id="add-updatebookmark-and-deletebookmark-mutations">Add <code>updateBookmark</code> and <code>deleteBookmark</code> Mutations</h2>
+<p>Now that we can create and query bookmarks we’ll want to give users a way to update and delete them as well. First, we’ll address bookmark updates by adding an <code>UpdateBookmarkInput</code> Input Object type and an <code>updateBookmark</code> field on the root <code>Mutation</code> type:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to update an existing bookmark.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">UpdateBookmarkInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The unique ID of the bookmark.&quot;</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The Auth0 ID of the user who created the bookmark.&quot;</span>
+</span><span class="hll">  ownerAccountId: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The updated privacy setting for the bookmark.&quot;</span>
+</span><span class="hll">  private: <span class="k">Boolean</span>
+</span><span class="hll">  <span class="s2">&quot;An updated user-applied tags for the bookmark.&quot;</span>
+</span><span class="hll">  tags: <span class="p">[</span><span class="k">String</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;The updated title to describe the bookmarked content.&quot;</span>
+</span><span class="hll">  title: <span class="k">String</span>
+</span><span class="hll">  <span class="s2">&quot;The updated URL of the bookmarked page.&quot;</span>
+</span><span class="hll">  url: <span class="k">URL</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Updates a bookmark.&quot;</span>
+</span><span class="hll">  <span class="k">updateBookmark</span><span class="p">(</span>input: <span class="k">UpdateBookmarkInput</span><span class="p">!):</span> <span class="k">Bookmark</span><span class="p">!</span> 
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.ownerAccountId&quot;</span><span class="p">)</span>
+</span><span class="p">}</span>
+</pre></div>
+
+<p>We included an <code>ownerAccountId</code> field in the <code>UpdateBookmarkInput</code> to help facilitate field-level authorization and prevent non-owners from updating bookmarks that they don’t own. However, we still have a security vulnerability related to bookmark updates. The <code>@owner</code> directive will prevent unauthenticated users from trying to update a bookmark it will also prevent authenticated users from updating bookmarks they don’t own if they submit the true <code>ownerAccountId</code> value with the mutation. However, there’s nothing to prevent an authenticated bad actor from submitting their own <code>ownerAccountId</code> instead of the actual bookmark owner’s ID. In this instance, the bad actor’s <code>ownerAccountId</code> would equal the <code>sub</code> value of the validated token and the mutation would proceed.</p>
+<p>This scenario presents a shortcoming in our directive-based authorization approach that would be more easily addressed using resolver middleware for field-level authorization. Due to the constraints of the <code>@owner</code> directive implementation, when we create the <code>updateBookmark</code> method in the <code>BookmarksDataSource</code> class we will use the bookmark’s document ID and the authenticated user’s account ID from a validated token to match on when finding the document in MongoDB to update:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">
+</span><span class="hll">  <span class="nx">async</span> <span class="nx">updateBookmark</span><span class="p">(</span>
+</span><span class="hll">    <span class="nx">id</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">userId</span><span class="p">,</span>
+</span><span class="hll">    <span class="p">{</span> <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">_</span><span class="p">,</span> <span class="p">...</span><span class="nx">updatedBookmarkData</span> <span class="p">}</span>
+</span><span class="hll">  <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span>
+</span><span class="hll">      <span class="o">!</span><span class="nx">updatedBookmarkData</span> <span class="o">||</span>
+</span><span class="hll">      <span class="p">(</span><span class="nx">updatedBookmarkData</span> <span class="o">&amp;&amp;</span> <span class="nb">Object</span><span class="p">.</span><span class="nx">keys</span><span class="p">(</span><span class="nx">updatedBookmarkData</span><span class="p">).</span><span class="nx">length</span> <span class="o">===</span> <span class="mi">0</span><span class="p">)</span>
+</span><span class="hll">    <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;You must supply some bookmark data to update.&quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">updatedBookmarkData</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">formattedTags</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">_formatTags</span><span class="p">(</span><span class="nx">updatedBookmarkData</span><span class="p">.</span><span class="nx">tags</span><span class="p">);</span>
+</span><span class="hll">      <span class="nx">updatedBookmarkData</span><span class="p">.</span><span class="nx">tags</span> <span class="o">=</span> <span class="nx">formattedTags</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">Bookmark</span><span class="p">.</span><span class="nx">findOneAndUpdate</span><span class="p">(</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">_id</span><span class="o">:</span> <span class="nx">id</span><span class="p">,</span> <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">userId</span> <span class="p">},</span>
+</span><span class="hll">      <span class="nx">updatedBookmarkData</span><span class="p">,</span>
+</span><span class="hll">      <span class="p">{</span>
+</span><span class="hll">        <span class="k">new</span><span class="o">:</span> <span class="kc">true</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">    <span class="p">);</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>In the resolvers now, we can add the <code>updateBookmark</code> mutation. The <code>updateBookmark</code> field on the root <code>Mutation</code> type has a non-nullable <code>Bookmark</code> as an output type, so if the data source method doesn’t return a bookmark because the bookmark ID and the owner’s account ID were mismatched, then we’ll throw and a <code>UserInputError</code>:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">createBookmark</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">createBookmark</span><span class="p">(</span><span class="nx">input</span><span class="p">);</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">async</span> <span class="nx">updateBookmark</span><span class="p">(</span>
+</span><span class="hll">      <span class="nx">root</span><span class="p">,</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">id</span><span class="p">,</span> <span class="p">...</span><span class="nx">rest</span> <span class="p">}</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">}</span>
+</span><span class="hll">    <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">userId</span> <span class="o">=</span> <span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span> <span class="o">?</span> <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">bookmark</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">updateBookmark</span><span class="p">(</span>
+</span><span class="hll">        <span class="nx">id</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">userId</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">rest</span>
+</span><span class="hll">      <span class="p">);</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nx">bookmark</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;Bookmark cannot be updated.&quot;</span><span class="p">);</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">return</span> <span class="nx">bookmark</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>The <code>updateBookmark</code> mutation is now ready to test on an existing bookmark:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">UpdateBookmark</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">UpdateBookmarkInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">updateBookmark</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">tags</span>
+    <span class="k">title</span>
+    <span class="k">url</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;6263010dd1cff70555d1f622&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;ownerAccountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;graphql&quot;</span><span class="p">,</span> <span class="s2">&quot;apollo&quot;</span><span class="p">,</span> <span class="s2">&quot;federation-2&quot;</span><span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;updateBookmark&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;6263010dd1cff70555d1f622&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="s2">&quot;graphql&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;apollo&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;federation-2&quot;</span>
+      <span class="p">],</span>
+      <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Apollo Federation docs&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://www.apollographql.com/docs/federation/&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>To wrap up, we’ll add a <code>deleteBookmark</code> mutation to the subgraph schema now:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to delete a bookmark.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">DeleteBookmarkInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The unique ID of the bookmark.&quot;</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The Auth0 ID of the user who created the bookmark.&quot;</span>
+</span><span class="hll">  ownerAccountId: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Deletes a bookmark.&quot;</span>
+</span><span class="hll">  <span class="k">deleteBookmark</span><span class="p">(</span>input: <span class="k">DeleteBookmarkInput</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span> 
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.ownerAccountId&quot;</span><span class="p">)</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Now we’ll add a method to the <code>BookmarkDataSource</code> class to handle bookmark deletion. Similar to the <code>updateBookmark</code> method, we need to use the authenticated user’s account ID as one of the fields to match in the filter document passed to <code>findOneAndDelete</code> to prevent users from deleting other user’s bookmarks:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">
+</span><span class="hll">  <span class="nx">async</span> <span class="nx">deleteBookmark</span><span class="p">(</span><span class="nx">id</span><span class="p">,</span> <span class="nx">userId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">try</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">deletedBookmark</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Bookmark</span><span class="p">.</span><span class="nx">findOneAndDelete</span><span class="p">({</span>
+</span><span class="hll">        <span class="nx">_id</span><span class="o">:</span> <span class="nx">id</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="nx">userId</span>
+</span><span class="hll">      <span class="p">}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">return</span> <span class="nx">deletedBookmark</span> <span class="o">?</span> <span class="kc">true</span> <span class="o">:</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Lastly, we’ll add the corresponding resolver:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">    <span class="nx">deleteBookmark</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">id</span> <span class="p">}</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">userId</span> <span class="o">=</span> <span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span> <span class="o">?</span> <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">      
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">deleteBookmark</span><span class="p">(</span><span class="nx">id</span><span class="p">,</span> <span class="nx">userId</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span>    <span class="c1">// ...</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can try deleting an authenticated user’s existing bookmark:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">DeleteBookmark</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">DeleteBookmarkInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">deleteBookmark</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;62630650d1cff70555d1f634&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;ownerAccountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625c652808eac7006851b39f&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;deleteBookmark&quot;</span><span class="p">:</span> <span class="kc">true</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="get-recommended-bookmarks-based-on-a-users-interests">Get Recommended Bookmarks Based on a User’s Interests</h2>
+<p>The final addition to the bookmarks service’s schema in this chapter will be a new field on the extended <code>Profile</code> entity that recommends other users’ bookmarks to a user that are based on the interests saved in their profile. Here we are faced with the interesting challenge of getting access to the tag-like list of interests saved in the profiles service’s database without querying it directly. Once again, the Apollo Federation specification accounts for this type of advanced scenario and allows us to pass non-key field data from one service to another during query plan execution by using the <code>@requires</code> directive. With this additional data available, we can resolve the computed field from within the bookmarks service.</p>
+<p>To add the <code>recommendedBookmarks</code> field, we must first add the <code>interests</code> field to the <code>Profile</code> type with an <code>@external</code> directive applied to it. The <code>@external</code> directive indicates that this subgraph knows that the <code>interests</code> field is defined on the entity elsewhere and will reference it here, but it’s not capable of resolving that field. But before we can use either of these Federation 2 directives, we must add them to the <code>import</code> argument on the <code>@link</code> directive for this subgraph schema first After that, we can add the <code>recommendedBookmarks</code> field and apply the <code>@requires</code> directive to is with a <code>fields</code> argument set to <code>interests</code>:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">extend</span> <span class="k">schema</span>
+  <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/federation/v2.0&quot;</span>,
+<span class="hll">        import: <span class="p">[</span><span class="s2">&quot;@external&quot;, &quot;@key&quot;, &quot;@requires&quot;, &quot;@shareable&quot;</span><span class="p">])</span>
+</span>
+<span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Profile</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;account { id }&quot;</span><span class="p">)</span> <span class="p">{</span>
+  account: <span class="k">Account</span>
+<span class="hll">  interests: <span class="p">[</span><span class="k">String</span><span class="p">]</span> <span class="kt">@external</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">  A list of recommended bookmarks for a user, based on their interests.</span>
+</span><span class="hll"><span class="c c-Multi">  &quot;&quot;&quot;</span>
+</span><span class="hll">  <span class="k">recommendedBookmarks</span><span class="p">(</span>after: <span class="k">String</span>, first: <span class="k">Int</span><span class="p">):</span> <span class="k">BookmarkConnection</span> 
+</span><span class="hll">    <span class="kt">@requires</span><span class="p">(</span>fields: <span class="s2">&quot;interests&quot;</span><span class="p">)</span>
+</span><span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>Next, we’ll add a <code>getRecommendedBookmarks</code> method that converts the array of tag-like interest strings into a single string that can be used for full-text search in MongoDB. We also filter out private bookmarks and any bookmarks that are owned by the user:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+  
+<span class="hll">  <span class="nx">async</span> <span class="nx">getRecommendedBookmarks</span><span class="p">(</span><span class="nx">accountId</span><span class="p">,</span> <span class="nx">interests</span><span class="p">,</span> <span class="p">{</span> <span class="nx">after</span><span class="p">,</span> <span class="nx">first</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">sort</span> <span class="o">=</span> <span class="p">{</span> <span class="nx">score</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$meta</span><span class="o">:</span> <span class="s2">&quot;textScore&quot;</span> <span class="p">},</span> <span class="nx">_id</span><span class="o">:</span> <span class="o">-</span><span class="mi">1</span> <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">searchString</span> <span class="o">=</span> <span class="nx">interests</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">interest</span> <span class="p">=&gt;</span>
+</span><span class="hll">        <span class="nx">interest</span><span class="p">.</span><span class="nx">includes</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">)</span>
+</span><span class="hll">          <span class="o">?</span> <span class="sb">`\\&quot;</span><span class="si">${</span><span class="nx">interest</span><span class="p">.</span><span class="nx">split</span><span class="p">(</span><span class="s2">&quot;-&quot;</span><span class="p">).</span><span class="nx">join</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">)</span><span class="si">}</span><span class="sb">\\&quot;`</span>
+</span><span class="hll">          <span class="o">:</span> <span class="nx">interest</span>
+</span><span class="hll">      <span class="p">)</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">join</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">filter</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">$and</span><span class="o">:</span> <span class="p">[</span>
+</span><span class="hll">        <span class="p">{</span>
+</span><span class="hll">          <span class="nx">$text</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$search</span><span class="o">:</span> <span class="nx">searchString</span> <span class="p">},</span>
+</span><span class="hll">          <span class="nx">ownerAccountId</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$ne</span><span class="o">:</span> <span class="nx">accountId</span> <span class="p">},</span>
+</span><span class="hll">          <span class="kr">private</span><span class="o">:</span> <span class="kc">false</span>
+</span><span class="hll">        <span class="p">}</span>
+</span><span class="hll">      <span class="p">]</span>
+</span><span class="hll">    <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">queryArgs</span> <span class="o">=</span> <span class="p">{</span> <span class="nx">after</span><span class="p">,</span> <span class="nx">first</span><span class="p">,</span> <span class="nx">filter</span><span class="p">,</span> <span class="nx">sort</span> <span class="p">};</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">edges</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">pagination</span><span class="p">.</span><span class="nx">getEdges</span><span class="p">(</span><span class="nx">queryArgs</span><span class="p">);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">pageInfo</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">pagination</span><span class="p">.</span><span class="nx">getPageInfo</span><span class="p">(</span><span class="nx">edges</span><span class="p">,</span> <span class="nx">queryArgs</span><span class="p">);</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="p">{</span> <span class="nx">edges</span><span class="p">,</span> <span class="nx">pageInfo</span> <span class="p">};</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Lastly, we’ll add the resolver for the <code>recommendedBookmarks</code> field. Because we indicated that the <code>Profile</code> entity’s <code>interests</code> field value will be required to resolve this computed field, we will have access to those values in the first parameter of the resolver function:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+  
+  <span class="nx">Profile</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">bookmarks</span><span class="p">(</span><span class="nx">profile</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="c1">// ...</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">recommendedBookmarks</span><span class="p">({</span> <span class="nx">account</span><span class="p">,</span> <span class="nx">interests</span> <span class="p">},</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">getRecommendedBookmarks</span><span class="p">(</span>
+</span><span class="hll">        <span class="nx">account</span><span class="p">.</span><span class="nx">id</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">interests</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">args</span>
+</span><span class="hll">      <span class="p">);</span>
+</span>    <span class="p">}</span>
+  <span class="p">},</span>
+
+
+  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>We’re ready to test the field now. Try adding the <code>recommendedBookmarks</code> field to the operation document of a <code>profile</code> query:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Profile</span><span class="p">(</span><span class="nv">$username</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">profile</span><span class="p">(</span>username: <span class="nv">$username</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">username</span>
+    <span class="k">interests</span>
+    <span class="k">recommendedBookmarks</span><span class="p">(</span>first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+      <span class="k">edges</span> <span class="p">{</span>
+        <span class="k">node</span> <span class="p">{</span>
+          <span class="k">tags</span>
+          <span class="k">title</span>
+          <span class="k">url</span>
+        <span class="p">}</span>
+      <span class="p">}</span> 
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">10</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;profile&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;interests&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="s2">&quot;graphql&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;javascript&quot;</span>
+      <span class="p">],</span>
+      <span class="nt">&quot;recommendedBookmarks&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="nt">&quot;edges&quot;</span><span class="p">:</span> <span class="p">[</span>
+          <span class="p">{</span>
+            <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="s2">&quot;javascript&quot;</span>
+              <span class="p">],</span>
+              <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Eloquent JavaScript&quot;</span><span class="p">,</span>
+              <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://eloquentjavascript.net/&quot;</span>
+            <span class="p">}</span>
+          <span class="p">},</span>
+          <span class="p">{</span>
+            <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="s2">&quot;graphql&quot;</span>
+              <span class="p">],</span>
+              <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Life of a GraphQL Query — Validation&quot;</span><span class="p">,</span>
+              <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://medium.com/@cjoudrey/life-of-a-graphql-query-validation-18a8fb52f1898&quot;</span>
+            <span class="p">}</span>
+          <span class="p">},</span>
+          <span class="p">{</span>
+            <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;tags&quot;</span><span class="p">:</span> <span class="p">[</span>
+                <span class="s2">&quot;graphql&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;apollo&quot;</span>
+              <span class="p">],</span>
+              <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Life of a GraphQL Query — Lexing/Parsing&quot;</span><span class="p">,</span>
+              <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://medium.com/@cjoudrey/life-of-a-graphql-query-lexing-parsing-ca7c5045fad8&quot;</span>
+            <span class="p">}</span>
+          <span class="p">}</span>
+        <span class="p">]</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>You should see that only public bookmarks that have been saved by other users are resolved for the <code>recommendedBookmarks</code> field. When using the <code>@requires</code> directive, examining the gateway’s query plan can help us understand how data resolved by one subgraph can flow through to another:</p>
+<p></p>
+<div class="code-context">
+<p>Query Plan</p>
+</div>
+<div class="highlight"><pre><span></span>QueryPlan {
+  Sequence {
+    Fetch(service: &quot;profiles&quot;) {
+      {
+        profile(username: $username) {
+          __typename
+          account {
+            id
+          }
+          username
+          interests
+        }
+      }
+    },
+    Flatten(path: &quot;profile&quot;) {
+      Fetch(service: &quot;bookmarks&quot;) {
+        {
+          ... on Profile {
+            __typename
+            account {
+              id
+            }
+            interests
+          }
+        } =&gt;
+        {
+          ... on Profile {
+            recommendedBookmarks(first: $first) {
+              edges {
+                node {
+                  tags
+                  title
+                  url
+                }
+              }
+            }
+          }
+        }
+      },
+    },
+  },
+}
+</pre></div>
+
+<h2 id="summary">Summary</h2>
+<p>At the conclusion of this chapter, we have now set up three separate subgraphs and composed them into the supergraph schema. By building out the bookmarks service, we had the opportunity to reinforce everything that we’ve learned about subgraph design so far while also exploring some advanced features of Apollo Federation such as using multiple entity keys, compound entity keys, and the <code>@requires</code> directive to resolve computed fields.</p>
+<p>The remainder of this book will focus on adding some polish to our federated graph architecture to get it closer to a production-ready state. In the next chapter, we’ll focus on some key areas of concern when optimizing graph performance and protecting it from bad actors who may try to exploit it.</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

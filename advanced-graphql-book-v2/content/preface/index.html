@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#preface">Preface</a>
+<ul>
+<li><a href="#whats-inside">What’s Inside</a></li>
+<li><a href="#who-should-read-this-book">Who Should Read this Book</a></li>
+<li><a href="#getting-the-most-from-this-book">Getting the Most from this Book</a></li>
+<li><a href="#formatting-conventions">Formatting Conventions</a></li>
+<li><a href="#package-versions">Package Versions</a></li>
+<li><a href="#reference-source-code">Reference Source Code</a></li>
+<li><a href="#required-software">Required Software</a></li>
+<li><a href="#optional-software">Optional Software</a></li>
+<li><a href="#the-game-plan">The Game Plan</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 class="unnumbered" epub:type="preface" id="preface">Preface</h1>
+<p>Welcome to the second edition of <em>Advanced GraphQL with Apollo</em>! I’m very excited that you’ve chosen this book to broaden your GraphQL skill set.</p>
+<p>GraphQL was invented at Facebook in 2012 and was publicly launched in 2015. Since then, it has opened up a world of new possibilities for API design and consumption. Today, it has been famously adopted by companies including The New York Times, Shopify, Coursera, AirBnB, GitHub, and Netflix. It has also inspired countless open source projects related to it, including the popular suite of Apollo tools for working with GraphQL APIs in both client and server applications.</p>
+<p>And as adoption has expanded so have the demands on what is possible with a GraphQL API, especially when it’s used to support distributed application architectures. GraphQL shines in how it allows you to consolidate data from multiple sources in field resolver functions to support specific client use cases. But over time, and as more and more teams begin to contribute to a monolithic GraphQL schema, the schema evolution process can become a choke point in everyone’s development process. Alternatively, bluntly dividing type definitions between teams and manually reconsolidating those definitions into a single schema for clients to query may be easier said than done because type and field boundaries can be imprecise.</p>
+<p>The initial Apollo Federation specification offered a compelling solution to these challenges. It allows a schema to be divided based on separation of concerns and then declaratively composed into a single GraphQL API. The second version of the Apollo Federation specification—made generally available in 2022—augments these features with a more flexible composition model to make iterative schema evolution among teams even easier. The chapters that follow will explore many of those features.</p>
+<h2 id="whats-inside">What’s Inside</h2>
+<p>This book covers a wide range of topics relevant to developing distributed GraphQL APIs from scratch with JavaScript and it does so using a practical, project-based approach. Working through this book from start to finish will leave you with a relatively full-featured GraphQL API that resolves data from several different back-end services.</p>
+<p>Specific topics covered throughout the book include:</p>
+<ul>
+<li>Composing multiple subgraph schemas into a single GraphQL API using Apollo Gateway</li>
+<li>Adding authentication to a Node.js application with Express middleware and Auth0</li>
+<li>Adding authorization to a GraphQL API using a series of custom type system directives</li>
+<li>Creating custom Scalar types to share across subgraph schemas</li>
+<li>Using Apollo data sources to fetch data in resolvers</li>
+<li>Implementing Relay-style pagination for data from MongoDB</li>
+<li>Securing and optimizing the performance of a GraphQL API</li>
+<li>Using an orchestrator to coordinate mutations across multiple subgraphs</li>
+<li>Using the next-gen Apollo Router as an alternative to Apollo Gateway</li>
+</ul>
+<p>In its exploration of these topics, this book is divided into 10 chapters. Chapters 1 to 6 focus on building out three core services that will provide data for the API. Chapters 7-10 focus on more advanced topics including performance and security considerations, mutation orchestration, managed federation, and the Rust-based Apollo Router.</p>
+<p>Because of the intermediate nature of the content, this book does not cover the basics of Node.js, or MongoDB and assumes some prior exposure to GraphQL.</p>
+<h2 id="who-should-read-this-book">Who Should Read this Book</h2>
+<p>This book covers more advanced topics than a typical introductory GraphQL book or course, but the topics are presented in an accessible way by building up code examples piece-by-piece with explanations in the supporting text. That said, before proceeding, consider if you have at least:</p>
+<ul>
+<li>Intermediate knowledge of JavaScript (including ES2015+ features of the language)</li>
+<li>Previous exposure to GraphQL, such as basic schema design concepts, using a GraphQL API to read and write some data before, and creating a resolver function in Apollo Server</li>
+<li>Experimented with Node.js and MongoDB in the context of web application development</li>
+<li>Some awareness of the advantages of GraphQL APIs compared to other options (there’s no preamble GraphQL sales pitch in this book—we’re going to jump right into code)</li>
+</ul>
+<p>If those qualifications sound like they describe you, then you’re in the right place. By the time you have finished this book, you’ll feel confident using advanced features of Apollo Server and Apollo Federation and applying what you learn here to complex, real-world development scenarios.</p>
+<h2 id="getting-the-most-from-this-book">Getting the Most from this Book</h2>
+<p>To get the most from your experience reading this book I encourage you to work through each chapter chronologically because the code in each chapter builds on the previous one. This book is structured sequentially around building out a distributed GraphQL API from scratch.</p>
+<p>If you intend to build out the demonstration application as you work through the chapters, I also encourage you to explicitly type out as much of the code that you encounter as possible rather than simply copying and pasting snippets. In my experience, taking the time to intentionally type out code examples aids comprehension and builds mental muscle memory.</p>
+<p>Of course, if you’re working on another GraphQL-based project right now and are in search of insights or code examples for any of the aforementioned topics, each chapter of this book also stands alone in building out a coherent chunk of functionality for the application. You will almost certainly find that various chapters serve as helpful reference points for that work too.</p>
+<h2 id="formatting-conventions">Formatting Conventions</h2>
+<h3 id="code-blocks">Code Blocks</h3>
+<p>In favor of brevity, some code examples are truncated where code that was previously added to a file doesn’t change in the context of a new update to that file. Additionally, file diffs are highlighted in code examples to enhance readability and filenames are added above the code blocks in italics, where applicable. For example:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">http</span> <span class="nx">from</span> <span class="s2">&quot;http&quot;</span><span class="p">;</span>
+
+<span class="hll"><span class="kr">import</span> <span class="nx">app</span> <span class="nx">from</span> <span class="s2">&quot;./config/app.js&quot;</span><span class="p">;</span>
+</span><span class="hll"><span class="kr">import</span> <span class="nx">initGateway</span> <span class="nx">from</span> <span class="s2">&quot;./config/apollo.js&quot;</span><span class="p">;</span>
+</span>
+<span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+<span class="kr">const</span> <span class="nx">httpServer</span> <span class="o">=</span> <span class="nx">http</span><span class="p">.</span><span class="nx">createServer</span><span class="p">(</span><span class="nx">app</span><span class="p">);</span>
+<span class="hll"><span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">);</span>
+</span>
+<span class="nx">await</span> <span class="nx">gateway</span><span class="p">.</span><span class="nx">start</span><span class="p">();</span>
+<span class="nx">gateway</span><span class="p">.</span><span class="nx">applyMiddleware</span><span class="p">({</span> <span class="nx">app</span><span class="p">,</span> <span class="nx">path</span><span class="o">:</span> <span class="s2">&quot;/&quot;</span> <span class="p">});</span>
+
+<span class="nx">await</span> <span class="k">new</span> <span class="nb">Promise</span><span class="p">(</span><span class="nx">resolve</span> <span class="p">=&gt;</span> <span class="nx">httpServer</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">},</span> <span class="nx">resolve</span><span class="p">));</span>
+<span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Gateway ready at http://localhost:</span><span class="si">${</span><span class="nx">port</span><span class="si">}${</span><span class="nx">gateway</span><span class="p">.</span><span class="nx">graphqlPath</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+</pre></div>
+
+<h3 id="inline-code">Inline Code</h3>
+<p>Code and filenames that are referenced inline (for example, within a paragraph or list item) are rendered in <code>this monospaced font</code> to distinguish them from the other text.</p>
+<h3 id="info-boxes">Info Boxes</h3>
+<p>Supplementary notes and additional tips related to the main content are presented in gray boxes throughout the chapters as follows:</p>
+<div class="boxout">
+<p>You can find a current version of the GraphQL specification here: <a href="http://spec.graphql.org/">http://spec.graphql.org/</a></p>
+</div>
+<h3 id="quotes">Quotes</h3>
+<p>Longer sections of text directly quoted from another source are delineated with a gray border to the left of the quote:</p>
+<blockquote>
+<p>The best programs are written so that computing machines can perform them quickly and so that human beings can understand them clearly. A programmer is ideally an essayist who works with traditional aesthetic and literary forms as well as mathematical concepts, to communicate the way that an algorithm works and to convince a reader that the results will be correct.</p>
+<p><em>—Donald E. Knuth, Selected Papers on Computer Science</em></p>
+</blockquote>
+<h2 id="package-versions">Package Versions</h2>
+<p>For compatibility purposes, package versions are specified wherever you are instructed to install a package from npm. You may wish to experiment with updated package versions as they become available, but compatibility with the other code in this book cannot be guaranteed.</p>
+<h2 id="reference-source-code">Reference Source Code</h2>
+<p>The complete source code for the application built throughout this book may be accessed at:</p>
+<p><a href="https://github.com/8bitpress/advanced-graphql-source-code-v2">https://github.com/8bitpress/advanced-graphql-source-code-v2</a></p>
+<h2 id="required-software">Required Software</h2>
+<h3 id="node.js">Node.js</h3>
+<p>To build the application as outlined in the chapters that follow you will need to have <strong>Node.js 16.x or higher</strong> installed on your computer. You can download the latest LTS version of Node.js for your operating system here:</p>
+<p><a href="https://nodejs.org/en/download/">https://nodejs.org/en/download/</a></p>
+<h3 id="mongodb">MongoDB</h3>
+<p>Two of the back-end services implemented in our application will use MongoDB as a database, so you will need to install <strong>MongoDB Community Edition 4.2 or higher</strong> as well. Download the latest version of MongoDB for your operating system here:</p>
+<p><a href="https://docs.mongodb.com/manual/administration/install-community/">https://docs.mongodb.com/manual/administration/install-community/</a></p>
+<h3 id="docker">Docker</h3>
+<h4 id="mac-or-windows">Mac or Windows</h4>
+<p>Docker is used in Chapters 8 and 10. If you’re using a Mac or Windows computer, then you can download Docker Desktop to install all of the software needed to run Docker here:</p>
+<p><a href="https://docs.docker.com/install/">https://docs.docker.com/install/</a></p>
+<p>You will need to sign up for a free Docker Hub account to download this software. Docker Desktop installs everything you need to run Docker locally, including Docker Engine, the Docker CLI client, Docker Compose, and a dashboard interface for managing Docker containers.</p>
+<h4 id="linux">Linux</h4>
+<p>If you’re using Linux, then you’ll need to refer to the Docker documentation (using the link above) for details on how to install Docker Engine for your preferred distribution.</p>
+<p>You will also need to install Docker Compose for Linux separately afterward:</p>
+<p><a href="https://docs.docker.com/compose/install/">https://docs.docker.com/compose/install/</a></p>
+<h3 id="rover-cli">Rover CLI</h3>
+<p>The Rover CLI is used to compose a supergraph schema locally, publish schemas to Apollo Studio for use with managed federation, and check proposed schema changes against known operations.</p>
+<h4 id="mac-or-linux">Mac or Linux</h4>
+<p>To install the specific version of Rover used in this book for Mac or Linux, run this command:</p>
+<div class="highlight"><pre><span></span>curl -sSL https://rover.apollo.dev/nix/v0.6.0 | sh
+</pre></div>
+
+<h4 id="windows">Windows</h4>
+<p>On Windows machines, run this command to install Rover via the Windows PowerShell Installer:</p>
+<div class="highlight"><pre><span></span>iwr &#39;https://rover.apollo.dev/win/v0.6.0&#39; | iex
+</pre></div>
+
+<h4 id="verify-installation">Verify Installation</h4>
+<p>Once installed for either Mac/Linux or Windows as instructed above, you should be able to run the following command:</p>
+<div class="highlight"><pre><span></span>rover --version
+</pre></div>
+
+<p>And see the following output in the terminal:</p>
+<div class="highlight"><pre><span></span>Rover 0.6.0
+</pre></div>
+
+<h2 id="optional-software">Optional Software</h2>
+<p>To assist with development you may also wish to download and install a GUI for interacting with MongoDB, such as <strong>MongoDB Compass</strong>:</p>
+<p><a href="https://www.mongodb.com/products/compass">https://www.mongodb.com/products/compass</a></p>
+<p>Lastly, if you use VS Code as an editor, then also consider installing the <strong>Apollo GraphQL extension</strong> to enhance your development experience with features such as GraphQL syntax highlighting:</p>
+<p><a href="https://marketplace.visualstudio.com/items?itemName=apollographql.vscode-apollo">https://marketplace.visualstudio.com/items?itemName=apollographql.vscode-apollo</a></p>
+<h2 id="the-game-plan">The Game Plan</h2>
+<p>Once the required software is installed, you’re ready to start coding in Chapter 1. In the pages that follow, we will build out a federated GraphQL API for <em>Marked</em>, which is a throwback, Web 2.0-inspired social bookmarking application. Marked users can save public and private bookmarks, add users to their network, and search for other users and public bookmarks using full-text search. As we build Marked, we’ll use Apollo Studio Explorer to test out all of the queries and mutations that we add to the schema.</p>
+<p>Structurally, Marked will consist of a gateway-level Apollo Server instance that routes incoming GraphQL requests from clients to four different subgraph schemas. Subgraphs can be implemented using a <a href="https://www.apollographql.com/docs/federation/other-servers/">variety of different GraphQL servers</a> in many different languages, but we will stick with Apollo Server to power all of the subgraph services as well. In the final chapter of the book, we will swap out the Node.js-based Apollo Gateway for the new Rust-based Apollo Router.</p>
+<p>Beyond these open-source libraries from Apollo, we will also use Auth0 to provide the authentication layer for the API and store basic user account data, MongoDB will be used as a database for two other services that manage user profile data and bookmarks data, and Temporal will be used to orchestrate cascading deletion of user account data across subgraphs. We will also use Apollo Studio as a schema registry and for viewing operation traces and metrics.</p>
+<p>Our project’s architecture can be visualized as follows:</p>
+<p><img src="../../images/diagrams/high-level-architecture.png" alt="Diagram of the high-level architecture of Marked’s back-end services" /><br />
+</p>
+<p>The journey of 1,000 miles begins with a single <code>npm install</code>, so onward to building our first subgraph schema with Apollo Federation!</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

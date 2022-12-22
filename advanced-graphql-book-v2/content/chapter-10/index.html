@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#apollo-router">Chapter 10: Apollo Router</a>
+<ul>
+<li><a href="#configure-apollo-router">Configure Apollo Router</a></li>
+<li><a href="#set-up-a-proxy-to-handle-authentication">Set Up a Proxy to Handle Authentication</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="apollo-router">Chapter 10: Apollo Router</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Configure Apollo Router and run it in a Docker container</li>
+<li>Replace Apollo Gateway with Apollo Router while using managed federation</li>
+<li>Add a proxy server in front of the router to handle authentication</li>
+</ul>
+</div>
+<h2 id="configure-apollo-router">Configure Apollo Router</h2>
+<p><a href="https://www.apollographql.com/docs/router/">Apollo Router</a> is the new Rust-based graph routing runtime that can be used with Apollo Federation. Rust is a lower-level language than JavaScript so the router has some notable performance gains over Apollo Gateway. The router is also highly configurable via a user-friendly YAML file, so for many use cases, it’s not necessary to write any Rust to use the router as a replacement for the gateway. For advanced implementations, it is also possible to write a <a href="https://www.apollographql.com/docs/router/customizations/native">native Rust plugin</a> for the router as well.</p>
+<p>When planning any migration from an Apollo Gateway to Apollo Router, it’s important to take stock of what customizations were made to the existing gateway. Throughout this book, we ended up making three key configurations to the gateway. In Chapter 2, we extracted a validated JWT from the <code>req.user</code> object in Apollo Server’s <code>context</code> and then used a <code>RemoteGraphQLDataSource</code> in the gateway to forward that validated token to the subgraphs. Later on in Chapter 7, we added a depth-limiting validation rule and used the <code>formatError</code> option in Apollo Server to mask errors that may reveal too much information about the structure of the API schema or underlying data sources in production environments.</p>
+<p>In this chapter, we will focus on configuring the router to pass validated JWTs to subgraphs but we will hold off on replicating depth limiting or doing any special error formatting here as these considerations would currently require writing custom Rust plugins. We’re also going to run Apollo Router using Docker, just as we did with the Temporal server. To simplify the command that we’ll use to start up this Docker container, we’ll create a small <code>docker-compose.yaml</code> file to store the container configuration options that we’ll need to run the router.</p>
+<div class="boxout">
+<p><strong>Some Essential Docker Concepts</strong></p>
+<p>If you’re new to Docker, then there are a few key concepts we need to define before we proceed with running Apollo Router with Docker.</p>
+<p>An <em>image</em> allows us to package up an application’s code with all of the specific dependencies required to run it. As a result, images make it easy for us to reliably move an app from machine to machine (for example, from a MacBook to a Linux machine on a cloud host). A key feature of images is that they are immutable because they represent what an app and its supporting environment look like at a particular point in time.</p>
+<p>We then use images to create <em>containers</em>. In other words, a container is a running instance of a given image. Reciprocally, an image is essentially a snapshot of a container that can be used to recreate other identical containers. Unlike images, running containers can be modified, so that means we can create a container for a database and then write data to it.</p>
+<p><a href="https://docs.docker.com/compose/">Docker Compose</a> helps streamline the process of defining and running multiple containers for an application. Using a YAML file we can declare all of the different services required by an app, what image to use for each service, and many more configuration options. Once assembled, a Compose file can be used to start all of the containers with a single command. We’ll only need one container to run Apollo Router but we could add more to its <code>docker-compose.yaml</code> file in the future if needed.</p>
+<p>To learn more about these key concepts, see the <a href="https://docs.docker.com/">Docker official documentation</a>.</p>
+</div>
+<p>Create a <code>router</code> subdirectory in the root project directory and add a <code>docker-compose.yaml</code> file to it with the following code:</p>
+<p></p>
+<div class="code-context">
+<p>router/docker-compose.yaml</p>
+</div>
+<div class="highlight"><pre><span></span><span class="nt">services</span><span class="p">:</span>
+  <span class="nt">apollo-router</span><span class="p">:</span>
+    <span class="nt">image</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">ghcr.io/apollographql/router:v0.9.2</span>
+    <span class="nt">container_name</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">apollo-router</span>
+    <span class="nt">env_file</span><span class="p">:</span>
+      <span class="p p-Indicator">-</span> <span class="l l-Scalar l-Scalar-Plain">./.env</span>
+    <span class="nt">volumes</span><span class="p">:</span>
+      <span class="p p-Indicator">-</span> <span class="l l-Scalar l-Scalar-Plain">./router.yaml:/dist/config/router.yaml</span>
+    <span class="nt">ports</span><span class="p">:</span>
+      <span class="p p-Indicator">-</span> <span class="s">&quot;5000:5000&quot;</span>
+</pre></div>
+
+<p>In the code above we define an <code>apollo-router</code> service with some specific configuration options:</p>
+<ul>
+<li><code>image</code>: This is the name of the image used to create the container. In this case, we use an <a href="https://github.com/apollographql/router/pkgs/container/router">official router image from Apollo</a>.</li>
+<li><code>container_name</code>: We provide a unique name to use for the container, rather than using the default container name assigned by Docker.</li>
+<li><code>env_file</code>: There are a few ways that we can set environment variables in a container and the option that we’ve chosen is to provide an entire <code>.env</code> file to the container that we’ll create in the <code>router</code> directory shortly.</li>
+<li><code>volumes</code>: We mount host paths (located on our computer) into a container using the <code>volumes</code> key. When we build a Docker image we end up with a writable container layer on top, but Docker containers can be created and deleted on the fly and we will often want to keep any data created by the container from build to build. Volumes allow us to persist the data generated and used by Docker containers on the host system so it may be used with subsequent builds (and potentially by other services). To customize the router, we’ll need to create a <code>router.yaml</code> file on the host machine and then mount it in the container when the router is running so it can pick up these options.</li>
+<li><code>ports</code>: We use the <code>ports</code> key to set up port forwarding so that the ports these services use inside of Docker are also available on the host machine. Setting up port forwarding for the router means that we will be able to access it on our computer using <code>localhost</code> just as we have with the gateway.</li>
+</ul>
+<p>Given that we referenced <code>.env</code> and <code>router.yaml</code> files in the <code>docker-compose.yaml</code> file, we should create those files before we try to create the router container. Apollo Router supports managed federation too, so we’ll need to provide it with the <code>APOLLO_KEY</code> and <code>APOLLO_GRAPH_REF</code> variables just as we did the gateway. We’ll also add the <code>APOLLO_ROUTER_HOT_RELOAD</code> variable to restart the router automatically when changes are made to the <code>router.yaml</code> configuration file:</p>
+<p></p>
+<div class="code-context">
+<p>router/.env</p>
+</div>
+<div class="highlight"><pre><span></span>APOLLO_KEY=XXXXXXXXXXXX
+APOLLO_GRAPH_REF=&lt;YOUR_GRAPH_ID&gt;@development
+APOLLO_ROUTER_HOT_RELOAD=true
+</pre></div>
+
+<div class="boxout">
+<p>Apollo Router supports unmanaged federation as well, but it doesn’t have any configuration options analogous to using <code>IntrospectAndCompose</code> with the <code>supergraphSdl</code> option in the gateway. Instead, you will need to generate the supergraph SDL using the Rover CLI and then pass a <code>.graphql</code> file containing that SDL to the router on start-up when using unmanaged federation with the router.</p>
+</div>
+<p>Next, we’ll create the <code>router.yaml</code> file in the <code>router</code> directory with a few options that will allow the router to run in a Docker container while still making requests to <code>localhost</code> to send operations to the running subgraphs during query plan execution:</p>
+<p></p>
+<div class="code-context">
+<p>router/router.yaml</p>
+</div>
+<div class="highlight"><pre><span></span><span class="nt">server</span><span class="p">:</span>
+  <span class="nt">listen</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">0.0.0.0:5000</span>
+<span class="nt">override_subgraph_url</span><span class="p">:</span>
+  <span class="nt">accounts</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4001</span>
+  <span class="nt">profiles</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4002</span>
+  <span class="nt">bookmarks</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4003</span>
+  <span class="nt">workflows</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4004</span>
+</pre></div>
+
+<p>The router will listen on port <code>5000</code> in the container on the all interfaces address inside of Docker. Additionally, we can’t use <code>localhost</code> for the subgraph endpoint because <code>localhost</code> will mean something different inside a Docker container than it does on the host machine, so we use the router’s <code>override_subgraph_url</code> configuration option to set each subgraph endpoint using the <a href="http://host.docker.internal">http://host.docker.internal</a> URL instead so that Docker knows to send requests from the router to the host machine.</p>
+<p>With our configuration files in place, we can start up the router with managed federation:</p>
+<p></p>
+<div class="code-context">
+<p>router/</p>
+</div>
+<div class="highlight"><pre><span></span>docker compose up
+</pre></div>
+
+<p>If we head over to <a href="http://localhost:5000">http://localhost:5000</a> in a browser, then we will see the familiar landing page for the Sandbox version of Explorer. Let’s try querying some publicly available data first:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">SearchBookmarks</span><span class="p">(</span><span class="nv">$query</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">searchBookmarks</span><span class="p">(</span>query: <span class="nv">$query</span>, first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">title</span>
+        <span class="k">url</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;graphql&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">2</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;searchBookmarks&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;edges&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;GraphQL Specification&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://spec.graphql.org/&quot;</span>
+          <span class="p">}</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;title&quot;</span><span class="p">:</span> <span class="s2">&quot;Life of a GraphQL Query — Validation&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://medium.com/@cjoudrey/life-of-a-graphql-query-validation-18a8fb52f1898&quot;</span>
+          <span class="p">}</span>
+        <span class="p">}</span>
+      <span class="p">]</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>As we can see, Apollo Router resolves the query just like Apollo Gateway does and it only took a small amount of configuration code to drop it in as a replacement. But what happens when we try an operation that returns data that can only be viewed by an authenticated user? Add a valid JWT as an <code>Authorization</code> header in Explorer and try running the following query now:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">SearchProfiles</span><span class="p">(</span><span class="nv">$query</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">searchProfiles</span><span class="p">(</span>query: <span class="nv">$query</span>, first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">username</span> 
+          <span class="k">account</span> <span class="p">{</span>
+          <span class="k">email</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;mark&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">2</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>The initial response that we see will be a server error that occurs because we have not yet configured CORS for the router so that it allows the <code>Authorization</code> header. We could fix that issue by adding the following code to the <code>router.yaml</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>router/router.yaml</p>
+</div>
+<div class="highlight"><pre><span></span><span class="nt">server</span><span class="p">:</span>
+  <span class="nt">listen</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">0.0.0.0:5000</span>
+<span class="hll">  <span class="nt">cors</span><span class="p">:</span>
+</span><span class="hll">    <span class="nt">origins</span><span class="p">:</span>
+</span><span class="hll">      <span class="p p-Indicator">-</span> <span class="l l-Scalar l-Scalar-Plain">https://studio.apollographql.com</span>
+</span><span class="hll">    <span class="nt">allow_headers</span><span class="p">:</span> <span class="p p-Indicator">[</span><span class="nv">Content-Type</span><span class="p p-Indicator">,</span> <span class="nv">Authorization</span><span class="p p-Indicator">]</span>
+</span><span class="c1"># ...</span>
+</pre></div>
+
+<p>However, even with this code in place, we will still see an error when we rerun the query. This time it will be a <code>Not authorized!</code> error and it occurs because we’re not validating the JWT in the router or setting it on <code>user</code> header in the requests to the subgraphs so that subgraphs may in turn use the validated token for field-level authorization.</p>
+<p>There are two possible solutions to this problem. The first would be writing <a href="https://www.apollographql.com/docs/router/customizations/native">a custom plugin in Rust</a> that can handle JWT validation for Auth0’s asymmetric signing algorithm and then add it to the router (just like the <code>jwks-rsa</code> middleware does in the gateway). Writing Rust is outside the scope of this book so we’ll opt for the alternative approach, which is to set up a Node.js-based proxy server in front of the router to validate tokens before forwarding them to this service.</p>
+<h3 id="optional-additional-helpful-docker-commands">Optional: Additional Helpful Docker Commands</h3>
+<p>Now that Docker is up and running locally, you may find the following additional commands helpful for managing your containers.</p>
+<p>Run Docker containers in the background (detached mode):</p>
+<div class="highlight"><pre><span></span>docker compose up -d
+</pre></div>
+
+<p>Recreate containers before running, even if their configuration and image haven’t changed:</p>
+<div class="highlight"><pre><span></span>docker compose up --force-recreate
+</pre></div>
+
+<p>Stop all of your running containers:</p>
+<div class="highlight"><pre><span></span>docker container stop <span class="k">$(</span>docker container ls -a -q<span class="k">)</span>
+</pre></div>
+
+<p>List all of the images cached on your system:</p>
+<div class="highlight"><pre><span></span>docker image ls
+</pre></div>
+
+<p>Remove unused images:</p>
+<div class="highlight"><pre><span></span>docker image prune
+</pre></div>
+
+<p>Check container memory usage:</p>
+<div class="highlight"><pre><span></span>docker stats
+</pre></div>
+
+<p>And if something goes sideways and you need to invoke a nuclear option to completely clean up and rebuild the containers and volumes, then run this command:</p>
+<div class="highlight"><pre><span></span>docker container stop <span class="k">$(</span>docker container ls -a -q<span class="k">)</span> <span class="o">&amp;&amp;</span> <span class="se">\</span>
+  docker system prune -a -f --volumes <span class="o">&amp;&amp;</span> <span class="se">\</span>
+  docker compose up
+</pre></div>
+
+<h2 id="set-up-a-proxy-to-handle-authentication">Set Up a Proxy to Handle Authentication</h2>
+<p>To complete the migration from the gateway to the router, we’ll need to set up a lightweight proxy server using Express to validate JWTs before forwarding API requests to the router. We’ll be able to repurpose some of the existing code from the gateway, so what we’re about to write should look familiar. To begin, we’ll create a new <code>auth-proxy</code> subdirectory in the root project directory and then create a <code>package.json</code> file in it:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/</p>
+</div>
+<div class="highlight"><pre><span></span>npm init --yes
+</pre></div>
+
+<p>We’ll install <code>dotenv</code>, <code>express</code>, and the same packages that we used to handle JWTs as before. We will also need to install the <code>cors</code> and <code>http-proxy-middleware</code> packages to use as middleware in the Express server:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i cors@2.8.5 dotenv@16.0.0 express@4.17.3 express-jwt@6.1.1 http-proxy-middleware@2.0.6 jwks-rsa@2.0.5
+</pre></div>
+
+<p>And again, we’ll use nodemon as a development dependency to restart the server as files change:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i -D nodemon@2.0.15
+</pre></div>
+
+<p>In the <code>package.json</code> file, we’ll set the <code>type</code> key to <code>module</code> and also add a <code>dev</code> script:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/package.json</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">  <span class="s2">&quot;type&quot;</span><span class="o">:</span> <span class="s2">&quot;module&quot;</span><span class="p">,</span>
+</span>  <span class="s2">&quot;scripts&quot;</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="s2">&quot;dev&quot;</span><span class="o">:</span> <span class="s2">&quot;nodemon -r dotenv/config -e env,js ./src/index.js&quot;</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We will need a <code>.env</code> file for this service as well and it will reuse several variables from the gateway but also include a <code>ROUTER_ENDPOINT</code> variable that we will use when configuring the proxy:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/.env</p>
+</div>
+<div class="highlight"><pre><span></span>AUTH0_AUDIENCE=http://localhost:4000/
+AUTH0_ISSUER=https://markedapp.us.auth0.com/
+
+ROUTER_ENDPOINT=http://localhost:5000
+
+NODE_ENV=development
+PORT=4000
+</pre></div>
+
+<p>Again, make sure that the <code>AUTH0_ISSUER</code> value is set to the domain of your Auth0 tenant. To finish scaffolding this service, add a <code>src</code> directory inside of <code>auth-proxy</code> with an <code>index.js</code> file in it. The current file structure in <code>auth-proxy</code> will look like this:</p>
+<div class="highlight"><pre><span></span>auth-proxy
+  ├── node_modules/
+  |   └── ...
+  ├── src/
+  |   └── index.js
+  ├── .env
+  ├── package.json
+  ├── package-lock.json
+</pre></div>
+
+<p>Now we can set up the token-validating middleware in this service. To do this, we have to create an Express app first and then add the <code>cors</code> middleware to it with the Apollo Studio URL as an allowed origin so we can continue to use Explorer to send requests to the API via the proxy. We will also copy and paste over the same JWT-handling middleware that was used in the gateway:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">cors</span> <span class="nx">from</span> <span class="s2">&quot;cors&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">express</span> <span class="nx">from</span> <span class="s2">&quot;express&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">jwt</span> <span class="nx">from</span> <span class="s2">&quot;express-jwt&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">jwksClient</span> <span class="nx">from</span> <span class="s2">&quot;jwks-rsa&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+<span class="kr">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nx">express</span><span class="p">();</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span>
+  <span class="nx">cors</span><span class="p">({</span>
+    <span class="nx">origin</span><span class="o">:</span> <span class="p">[</span><span class="s2">&quot;https://studio.apollographql.com&quot;</span><span class="p">]</span>
+  <span class="p">})</span>
+<span class="p">);</span>
+
+<span class="kr">const</span> <span class="nx">jwtCheck</span> <span class="o">=</span> <span class="nx">jwt</span><span class="p">({</span>
+  <span class="nx">secret</span><span class="o">:</span> <span class="nx">jwksClient</span><span class="p">.</span><span class="nx">expressJwtSecret</span><span class="p">({</span>
+    <span class="nx">cache</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+    <span class="nx">rateLimit</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+    <span class="nx">jwksRequestsPerMinute</span><span class="o">:</span> <span class="mi">5</span><span class="p">,</span>
+    <span class="nx">jwksUri</span><span class="o">:</span> <span class="sb">`</span><span class="si">${</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_ISSUER</span><span class="si">}</span><span class="sb">.well-known/jwks.json`</span>
+  <span class="p">}),</span>
+  <span class="nx">audience</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_AUDIENCE</span><span class="p">,</span>
+  <span class="nx">issuer</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_ISSUER</span><span class="p">,</span>
+  <span class="nx">algorithms</span><span class="o">:</span> <span class="p">[</span><span class="s2">&quot;RS256&quot;</span><span class="p">],</span>
+  <span class="nx">credentialsRequired</span><span class="o">:</span> <span class="kc">false</span>
+<span class="p">});</span>
+
+<span class="nx">app</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span><span class="nx">jwtCheck</span><span class="p">,</span> <span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">,</span> <span class="nx">next</span><span class="p">)</span> <span class="p">=&gt;</span> <span class="p">{</span>
+  <span class="k">if</span> <span class="p">(</span><span class="nx">err</span><span class="p">.</span><span class="nx">code</span> <span class="o">===</span> <span class="s2">&quot;invalid_token&quot;</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="nx">next</span><span class="p">();</span>
+  <span class="p">}</span>
+  <span class="k">return</span> <span class="nx">next</span><span class="p">(</span><span class="nx">err</span><span class="p">);</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>Now we can set up the proxy middleware. After the JWT middleware is applied, we’ll add the <code>createProxyMiddleware</code> by setting the router’s endpoint as the <code>target</code>, changing the origin, and hooking into the <code>onProxyReq</code> event to set a <code>user</code> header to the stringified value that the JWT middleware previously set for the <code>req.user</code> object:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">createProxyMiddleware</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;http-proxy-middleware&quot;</span><span class="p">;</span>
+</span><span class="c1">// ...</span>
+
+<span class="hll"><span class="nx">app</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span>
+</span><span class="hll">  <span class="nx">createProxyMiddleware</span><span class="p">({</span>
+</span><span class="hll">    <span class="nx">target</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">ROUTER_ENDPOINT</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">changeOrigin</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">onProxyReq</span><span class="p">(</span><span class="nx">proxyReq</span><span class="p">,</span> <span class="nx">req</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">proxyReq</span><span class="p">.</span><span class="nx">setHeader</span><span class="p">(</span>
+</span><span class="hll">        <span class="s2">&quot;user&quot;</span><span class="p">,</span> 
+</span><span class="hll">        <span class="nx">req</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span>
+</span><span class="hll">      <span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">})</span>
+</span><span class="hll"><span class="p">);</span>
+</span></pre></div>
+
+<p>Just as we discussed in Chapter 2 for the requests that Apollo Gateway sends to subgraphs, validating a token and passing it along to other services in this manner would necessitate that communication between the proxy and the router is secure and that the router isn’t directly accessible to the outside world. Lastly, we can start up the Express server on port <code>4000</code>:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="nx">app</span><span class="p">.</span><span class="nx">listen</span><span class="p">(</span><span class="nx">port</span><span class="p">,</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">  <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Authentication proxy ready at http://localhost:</span><span class="si">${</span><span class="nx">port</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+</span><span class="hll"><span class="p">});</span>
+</span></pre></div>
+
+<p>Before we can test out the new proxy server with the router, we need to make a final configuration change to the <code>router.yaml</code> file. Just as the gateway forwarded the <code>user</code> header to the subgraphs, the router will need to do the same. We can do this without writing any Rust by setting the <code>headers</code> option in <code>router.yaml</code> and then indicate that we want to propagate the <code>user</code> header from the incoming request from the proxy server to the subgraphs during query plan execution:</p>
+<p></p>
+<div class="code-context">
+<p>router/router.yaml</p>
+</div>
+<div class="highlight"><pre><span></span><span class="nt">server</span><span class="p">:</span>
+  <span class="nt">listen</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">0.0.0.0:5000</span>
+<span class="hll"><span class="nt">headers</span><span class="p">:</span>
+</span><span class="hll">  <span class="nt">all</span><span class="p">:</span>
+</span><span class="hll">    <span class="p p-Indicator">-</span> <span class="nt">propagate</span><span class="p">:</span>
+</span><span class="hll">        <span class="nt">named</span><span class="p">:</span> <span class="s">&quot;user&quot;</span>
+</span><span class="nt">override_subgraph_url</span><span class="p">:</span>
+  <span class="nt">accounts</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4001</span>
+  <span class="nt">profiles</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4002</span>
+  <span class="nt">bookmarks</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4003</span>
+  <span class="nt">workflows</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://host.docker.internal:4004</span>
+</pre></div>
+
+<p>Make sure the router is running on <a href="http://localhost:5000">http://localhost:5000</a> and then start up the proxy:</p>
+<p></p>
+<div class="code-context">
+<p>auth-proxy/</p>
+</div>
+<div class="highlight"><pre><span></span>npm run dev
+</pre></div>
+
+<p>Now we can rerun the <code>SearchProfiles</code> query and validate that the router will now authorize and resolve the operation. Note that you will need to change the Explorer endpoint back to <a href="http://localhost:4000">http://localhost:4000</a> to send the request through the proxy:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">SearchProfiles</span><span class="p">(</span><span class="nv">$query</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">searchProfiles</span><span class="p">(</span>query: <span class="nv">$query</span>, first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">username</span> 
+          <span class="k">account</span> <span class="p">{</span>
+          <span class="k">email</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;mark&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">2</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;searchProfiles&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;edges&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;funkybunch&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;markymarked@markedmail.com&quot;</span>
+            <span class="p">}</span>
+          <span class="p">}</span>
+        <span class="p">},</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;node&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+              <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot@markedmail.com&quot;</span>
+            <span class="p">}</span>
+          <span class="p">}</span>
+        <span class="p">}</span>
+      <span class="p">]</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>The request is now authorized and we receive the data that we expect in the response.</p>
+<h2 id="summary">Summary</h2>
+<p>Congratulations! It’s been a long journey from zero lines of code in the first chapter to a distributed GraphQL API powered by four different subgraphs, managed federation, and Apollo Router, but you made it all the way to the end. We began this chapter by configuring Apollo Router to run with Docker in a local development environment. We then added a Node.js-based proxy server to handle authentication in front of the router. After that, we were able to begin sending requests to the Marked GraphQL API exactly as we did before with Apollo Gateway, but now leveraging Apollo’s next-gen graph routing runtime.</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

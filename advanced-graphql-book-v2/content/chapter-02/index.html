@@ -1,0 +1,1307 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#authentication-and-user-account-management-with-auth0">Chapter 2: Authentication and User Account Management with Auth0</a>
+<ul>
+<li><a href="#sign-up-for-auth0">Sign Up for Auth0</a></li>
+<li><a href="#what-are-json-web-tokens-and-how-do-they-work">What Are JSON Web Tokens and How Do They Work?</a></li>
+<li><a href="#check-jwts-with-express-middleware">Check JWTs with Express Middleware</a></li>
+<li><a href="#pass-context-from-the-gateway-and-the-accounts-service">Pass Context from the Gateway and the Accounts Service</a></li>
+<li><a href="#create-auth0-applications-apis-and-users">Create Auth0 Applications, APIs, and Users</a></li>
+<li><a href="#generate-a-token-for-explorer">Generate a Token for Explorer</a></li>
+<li><a href="#the-auth0-management-api">The Auth0 Management API</a></li>
+<li><a href="#configure-auth0-with-node.js">Configure Auth0 with Node.js</a></li>
+<li><a href="#add-new-account-fields">Add New <code>Account</code> Fields</a></li>
+<li><a href="#add-a-createaccount-mutation">Add a <code>createAccount</code> Mutation</a></li>
+<li><a href="#add-mutations-to-update-accounts">Add Mutations to Update Accounts</a></li>
+<li><a href="#add-a-deleteaccount-mutation">Add a <code>deleteAccount</code> Mutation</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="authentication-and-user-account-management-with-auth0">Chapter 2: Authentication and User Account Management with Auth0</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Sign up for Auth0 and use it to authenticate requests to a GraphQL API</li>
+<li>Add middleware to Express to verify JSON Web Tokens sent with incoming requests</li>
+<li>Install and configure an Auth0 client library for Node.js to make requests to Auth0’s Management API</li>
+<li>Build out the <code>Account</code> type further by adding fields and some basic queries</li>
+<li>Add mutations for creating, updating, and deleting user accounts</li>
+</ul>
+</div>
+<h2 id="sign-up-for-auth0">Sign Up for Auth0</h2>
+<p>At the moment, our accounts service doesn’t have anything to do with authenticating or authorizing user accounts yet. We need a way for users to sign up for a new account so they can access data that will only be available to authenticated users. We will use a third-party service called <a href="https://auth0.com/">Auth0</a> to begin building out these features.</p>
+<p>Auth0 is an authentication and authorization platform for web and mobile apps. It facilitates many useful auth-related features such as social logins, single sign-on, and password-less authentication. You will need to sign up for an Auth0 account to use this service but it does have a free usage tier that covers all of the authentication and authorization features we’ll need to build Marked right now.</p>
+<p>You may be wondering, “why should we use a third-party service instead of building out authentication from scratch?” Some of the key architectural decisions you make when building an application rest on knowing when to not spend time reinventing solutions to challenging problems that have already been solved by other services or open-source libraries. For this reason, we will rely on Auth0 and its robust set of APIs to support the authentication requirements for this app and then focus our software development efforts on GraphQL-specific concerns instead.</p>
+<p>To get started, you’ll need to sign up for an Auth0 account. You can sign-up with a variety of different social logins or a username and password. Once you choose your preferred sign-up method you will be taken to the screen below:</p>
+<p><img src="../../images/screenshots/auth0-signup.png" alt="Choose an Auth0 account type" /><br />
+</p>
+<p>Once you complete all of the initial sign up steps, Auth0 will automatically create a default <em>tenant</em> for you and redirect you to its dashboard. A tenant is a logical unit of isolation within your new account. You can create more than one tenant per Auth0 account, which is helpful when managing different applications, APIs, and user data for development and production environments.</p>
+<p>Tenant names must be unique, use lowercase letters only, and they cannot be changed after creation (so choose your tenant name wisely!). If you prefer to use a different tenant name, then you can create a new one by choosing “Create tenant” from the menu in the top left-hand corner of the dashboard and setting a domain, region, and environment tag for it:</p>
+<p><img src="../../images/screenshots/auth0-create-tenant.png" alt="Create a new Auth0 tenant" /><br />
+</p>
+<p>If you created a new tenant, then the dashboard should look something like this. Notice that the tenant name has changed in the top left-hand corner of the dashboard now:</p>
+<p><img src="../../images/screenshots/auth0-new-tenant-dashboard.png" alt="Tenant dashboard in Auth0" /><br />
+</p>
+<h2 id="what-are-json-web-tokens-and-how-do-they-work">What Are JSON Web Tokens and How Do They Work?</h2>
+<p>Apart from managing user account data, by integrating Auth0 into Marked our goal is to make sure that if someone requests protected information, then we know that they are who they say they are. In other words, we want to know that they are <em>authenticated</em>. In the next chapter, we’ll use custom directives to verify that a user is <em>authorized</em> to see and change the specific data involved in an API request.</p>
+<p>To achieve this end, Auth0 will issue a user an <em>access token</em> when they successfully authenticate with the app. Access tokens allow applications to make requests to an API on a user’s behalf. A user’s browser can send this token along with each subsequent request so that the user doesn’t need to re-authenticate until the token expires.</p>
+<p>Auth0 will issue the access token in the form of a <em>JSON Web Token</em> (JWT). A JWT conforms to an open standard that describes how information may be transmitted as a compact JSON object. JWTs consist of three distinct parts:</p>
+<ol type="1">
+<li><strong>Header:</strong> Contains information about the token type and the algorithm used to sign the token (for example, RS256).</li>
+<li><strong>Payload:</strong> Contains claims about a particular entity, and these statements may have predefined meanings in the JWT specification (known as <em>registered</em> claims) or they can be defined by the JWT user (known as <em>public</em> or <em>private</em> claims).</li>
+<li><strong>Signature:</strong> Helps to verify that no information was changed during the token’s transmission by hashing together the token header, its payload, and a secret.</li>
+</ol>
+<p>To create the token, each of these parts is base64url-encoded (for compactness) and then concatenated together with a dot. A typical JWT may look like this:</p>
+<div class="break-line-anywhere">
+<div class="highlight"><pre><span></span>eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiaWF0IjoxNTE2MjM5MDIyLCJuYW1lIjoiQm9iIFJvc3MiLCJwYWludGVyIjp0cnVlfQ.IAHZ341NCj8ggBRNirYcLcV1nQUAaQt_P-FWJI-utW5nYhRj0EzFp_pyhz5JlyGMKveTJYxYF2_YuM7mSHBdbcUpoU-Z8JdqdoCifuddIcOL3ZaLCQhkgl84gf_T_u77a9PLjuRhExkYFjd73CTsXQUJgjn8YnKC8263VsYktN6N7iFcv0gWyRwdX4xWmyiES3LJWjwPW8cWInJIcc6m3z488UURHlvhlDshlOTJCWT0hrVaGOyFhSzqtDl8dU5_E6InMd3qyuQNus5TBiMacLcuLcP8GzpEnp3yCeRUcuhpw8ltDK0GVsMMVNBOfWVEps5iDAG7zdY18GiJ5zvnLg
+</pre></div>
+
+</div>
+<p>It’s important to note that even though the JWT above may look encrypted at first glance it’s just base64url-encoded, so all of the information inside can just as easily be decoded again. Similarly, the signature portion of the JWT only helps us ensure that its data hasn’t been changed while in transit between the sender and receiver. The signature plays no role in actually encrypting the information contained within. For these reasons, it’s important to not put any secret information inside of the JWT header or payload in plain text.</p>
+<p>The header and payload sections of the above token would respectively decode to:</p>
+<p></p>
+<div class="code-context">
+<p>JWT Header</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;alg&quot;</span><span class="p">:</span> <span class="s2">&quot;RS256&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;typ&quot;</span><span class="p">:</span> <span class="s2">&quot;JWT&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>JWT Payload</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;sub&quot;</span><span class="p">:</span> <span class="s2">&quot;1234567890&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;iat&quot;</span><span class="p">:</span> <span class="mi">1516239022</span><span class="p">,</span>
+  <span class="nt">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Bob Ross&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;painter&quot;</span><span class="p">:</span> <span class="kc">true</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>In the token’s payload, the <code>sub</code> and <code>iat</code> claims represent <em>registered</em> claims, where <code>sub</code> (short for “subject”) is a unique identifier for the object described by the token. The <code>iat</code> claim is the time at which the token was issued. These claims are a part of the JWT specification. However, <code>artist</code> and <code>painter</code> are <em>custom</em> claims added to token, and specifically, they would be considered <code>private</code> claims and meant for use in a closed network only. By contrast, a public claim is also user-defined but would be registered with the IANA JSON Web Token Claims registry or have a specially formatted name (such as a URI) to avoid naming collisions. There are no public claims in the token above.</p>
+<div class="boxout">
+<p>You can experiment with encoding and decoding JWTs at <a href="https://jwt.io">https://jwt.io</a>.</p>
+</div>
+<p>We now have some knowledge of what JWTs are and how they can help us send information between a client application and API to verify a user’s identity. Our next step will be to figure out how to process incoming JWTs on the server when a client has made a request to our GraphQL API.</p>
+<h2 id="check-jwts-with-express-middleware">Check JWTs with Express Middleware</h2>
+<p>We’re going to set up some Express middleware to handle the JWTs that are sent with incoming requests to the gateway. Once the middleware is fully configured, we’ll have to send an access token in the HTTP headers of the request when we include fields in an operation that are available to authenticated users only.</p>
+<p>To configure the JWT middleware we’ll need to install a few more npm packages, including:</p>
+<ul>
+<li><code>express-jwt</code>: Middleware for validating JWTs and setting a <code>user</code> object inside the Express <code>req</code> object. The <code>user</code> object will contain the decoded token payload so that it can be used for access control.</li>
+<li><code>jwks-rsa</code>: A library to retrieve RSA signing keys from a <em>JSON Web Key Set</em> (JWKS) endpoint. A JWKS is a set of keys containing the public keys that should be used to verify any JWT issued by the authorization server. Auth0 will provide the JWKS endpoint for us. We need this package to validate the signature of the JWT Auth0 issues because this token will be signed with a public/private key pair using RS256, rather than being signed symmetrically with a shared secret.</li>
+</ul>
+<div class="boxout">
+<p>A deeper discussion about the use of various signing algorithms to sign JWTs is outside of the scope of this book, but you can <a href="https://auth0.com/blog/navigating-rs256-and-jwks/">read more about RS256 and JWKS on the Auth0 blog</a>.</p>
+</div>
+<p>We’ll install both of these packages in <code>gateway</code> now:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i express-jwt@6.1.1 jwks-rsa@2.0.5
+</pre></div>
+
+<p>We need to create some Auth0-specific environment variables to use with the JWT middleware:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/.env</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll">AUTH0_AUDIENCE=http://localhost:4000/
+</span><span class="hll">AUTH0_ISSUER=https://markedapp.us.auth0.com/
+</span><span class="hll">
+</span># ...
+</pre></div>
+
+<p>The <code>AUTH0_AUDIENCE</code> is the endpoint of our GraphQL API and the <code>AUTH0_ISSUER</code> is the unique Auth0 domain for the tenant. Please note that your Auth0 domain will be different from the one above. Your domain will be <code>YOUR-TENANT-NAME.auth0.com</code> (and use a region-specific subdomain if you picked a non-US region for your tenant), so be sure to use the correct value for the <code>AUTH0_ISSUER</code> variable. Now we’ll update <code>app.js</code> with some new imports:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/app.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">express</span> <span class="nx">from</span> <span class="s2">&quot;express&quot;</span><span class="p">;</span>
+<span class="hll"><span class="kr">import</span> <span class="nx">jwt</span> <span class="nx">from</span> <span class="s2">&quot;express-jwt&quot;</span><span class="p">;</span>
+</span><span class="hll"><span class="kr">import</span> <span class="nx">jwksClient</span> <span class="nx">from</span> <span class="s2">&quot;jwks-rsa&quot;</span><span class="p">;</span>
+</span>
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>Next, we’ll set up the JWT-checking middleware for our Express app:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/app.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nx">express</span><span class="p">();</span>
+
+<span class="hll"><span class="kr">const</span> <span class="nx">jwtCheck</span> <span class="o">=</span> <span class="nx">jwt</span><span class="p">({</span>
+</span><span class="hll">  <span class="nx">secret</span><span class="o">:</span> <span class="nx">jwksClient</span><span class="p">.</span><span class="nx">expressJwtSecret</span><span class="p">({</span>
+</span><span class="hll">    <span class="nx">cache</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">rateLimit</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">jwksRequestsPerMinute</span><span class="o">:</span> <span class="mi">5</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">jwksUri</span><span class="o">:</span> <span class="sb">`</span><span class="si">${</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_ISSUER</span><span class="si">}</span><span class="sb">.well-known/jwks.json`</span>
+</span><span class="hll">  <span class="p">}),</span>
+</span><span class="hll">  <span class="nx">audience</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_AUDIENCE</span><span class="p">,</span>
+</span><span class="hll">  <span class="nx">issuer</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_ISSUER</span><span class="p">,</span>
+</span><span class="hll">  <span class="nx">algorithms</span><span class="o">:</span> <span class="p">[</span><span class="s2">&quot;RS256&quot;</span><span class="p">],</span>
+</span><span class="hll">  <span class="nx">credentialsRequired</span><span class="o">:</span> <span class="kc">false</span>
+</span><span class="hll"><span class="p">});</span>
+</span><span class="hll">
+</span><span class="kr">export</span> <span class="k">default</span> <span class="nx">app</span><span class="p">;</span>
+</pre></div>
+
+<p>Briefly stated, the code above checks the validity of the access token included in the headers of a user’s request. Less simply, under the hood, the <code>express-jwt</code> package will decode the token and then pass the request, the header, and the payload to <code>jwks-rsa</code>. Next, <code>jwks-rsa</code> will get the signing keys from the JWKS endpoint and check if one of the keys matches the <code>kid</code> in the header of the incoming JWT. If there’s no matching key, then an error will be thrown, but if there is a match, then <code>jwks-rsa</code> will hand the correct signing key back to <code>express-jwt</code>. The <code>express-jwt</code> package will then validate the signature of the token and other details like expiration time, audience, and issuer.</p>
+<p>You may find it strange that we set <code>credentialsRequired</code> to <code>false</code>, but we do so because we still want to provide some amount of access to unauthenticated users. If we set this value to <code>true</code> we wouldn’t even be able to access the Explorer user interface in our development environment because the unauthenticated introspection query would fail. When we add authorization in Chapter 3 we will instead require users to provide a valid JWT when making requests for certain fields only.</p>
+<p>The last thing to note about our JWT middleware configuration is that we set both <code>cache</code> and <code>rateLimit</code> to <code>true</code>. Doing so helps us avoid exceeding Auth0’s rate limit for the JWKS endpoint. We can now add the JWT-checking middleware to our Express app:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/app.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="nx">app</span><span class="p">.</span><span class="nx">use</span><span class="p">(</span><span class="nx">jwtCheck</span><span class="p">,</span> <span class="p">(</span><span class="nx">err</span><span class="p">,</span> <span class="nx">req</span><span class="p">,</span> <span class="nx">res</span><span class="p">,</span> <span class="nx">next</span><span class="p">)</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">  <span class="k">if</span> <span class="p">(</span><span class="nx">err</span><span class="p">.</span><span class="nx">code</span> <span class="o">===</span> <span class="s2">&quot;invalid_token&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="nx">next</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">  <span class="k">return</span> <span class="nx">next</span><span class="p">(</span><span class="nx">err</span><span class="p">);</span>
+</span><span class="hll"><span class="p">});</span>
+</span><span class="hll">
+</span><span class="kr">export</span> <span class="k">default</span> <span class="nx">app</span><span class="p">;</span>
+</pre></div>
+
+<p>You’ll notice that we’ve added some custom logic to this middleware to manage authorized access to the Express application. We must do this because by default <code>express-jwt</code> will throw an error if a token is invalid, even with <code>credentialsRequired</code> set to <code>false</code>. We don’t want Express to crash if the user submits an invalid token (for instance, if the token has exceeded its expiration time), so we must do some extra error handling here.</p>
+<p>Lastly, we’ll head over to <code>apollo.js</code> and add the value of the Express <code>req.user</code> object to the <code>context</code> in the Apollo Server. When setting the <code>context</code> property, we can either explicitly set it as an object or as a function that returns an object. For our purposes, we’ll need to use the function option so we can access the <code>req</code> object from its parameter:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+ <span class="c1">// ...</span>
+ 
+  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+    <span class="nx">gateway</span><span class="p">,</span>
+<span class="hll">    <span class="nx">plugins</span><span class="o">:</span> <span class="p">[</span><span class="nx">ApolloServerPluginDrainHttpServer</span><span class="p">({</span> <span class="nx">httpServer</span> <span class="p">})],</span>
+</span><span class="hll">    <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">user</span> <span class="o">||</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">      <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">};</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>The <code>context</code> stores data that is shared by all resolver functions, such as information about a currently authenticated user. This data can then be used inside resolver functions to modify what data is returned from a field or throw an error under certain conditions, as we’ll see later on.</p>
+<p>From the parameter Apollo makes available to this function, we destructure the <code>req</code> property to then access the <code>user</code> property that our JWT middleware has added. We then conditionally set information about the current user in the Apollo Server <code>context</code> if that information is available.</p>
+<p>Back over in the accounts service’s <code>resolvers.js</code> file, let’s update the <code>viewer</code> query to destructure the <code>user</code> from the <code>context</code> object, which is the third parameter available in the resolver function:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="nx">viewer</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">user</span><span class="p">);</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">accounts</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>If we try running the <code>viewer</code> query from Explorer now, then we’ll see that we log a value of <code>undefined</code>. This may seem strange because—while we wouldn’t expect to see any information about a current user because we haven’t sent an access token along with our request—we would at least expect to see <code>null</code> based on how we set the <code>user</code> property in the <code>context</code> object.</p>
+<p>Ultimately, this happens because we’ve set the <code>user</code> on the context at the gateway level of our API, rather than at the individual subgraph level. We’ll need to write some extra code to pass that context along from the gateway to subgraphs so we can use it in the service’s resolvers.</p>
+<h2 id="pass-context-from-the-gateway-and-the-accounts-service">Pass Context from the Gateway and the Accounts Service</h2>
+<p>For our gateway to share context with subgraph services, we’ll need to do two things. First, we’re going to need to do a little extra work when we instantiate the <code>ApolloGateway</code> to grab the gateway’s <code>user</code> context and pass it as part of the headers in the HTTP request to the underlying service. Second, we’ll need to use that new header to then set the context within the accounts service so we can access it in the <code>viewer</code> resolver. To do these two things, we’ll start by updating <code>apollo.js</code> with a new import from <code>@apollo/gateway</code> called <code>RemoteGraphQLDataSource</code>:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span>
+</span><span class="hll">  <span class="nx">ApolloGateway</span><span class="p">,</span>
+</span><span class="hll">  <span class="nx">IntrospectAndCompose</span><span class="p">,</span>
+</span><span class="hll">  <span class="nx">RemoteGraphQLDataSource</span>
+</span><span class="hll"><span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/gateway&quot;</span><span class="p">;</span>
+</span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-express&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServerPluginDrainHttpServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-core&quot;</span><span class="p">;</span>
+
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>By instantiating a new <code>RemoteGraphQLDataSource</code>, we can pass additional data from the gateway via HTTP headers in its requests to the subgraphs as it executes a query plan. Specifically, we will need to return the <code>RemoteGraphQLDataSource</code> object from the <code>buildService</code> option in the gateway. The <code>buildService</code> function is called for each request the gateway makes to a subgraph to resolve data for a given operation. This function has a single parameter which is an object representing the subgraph that the gateway is querying.</p>
+<p>To forward the authenticated user’s decoded and validated JWT, we’ll destructure the subgraph’s <code>url</code> property from the parameter and instantiate a new <code>RemoteGraphQLDataSource</code> by setting its <code>url</code> property to destructured subgraph URL and using its <code>willSendRequest</code> method to add a <code>user</code> header to the request as follows:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+    <span class="nx">supergraphSdl</span><span class="o">:</span> <span class="k">new</span> <span class="nx">IntrospectAndCompose</span><span class="p">({</span>
+      <span class="c1">// ...</span>
+<span class="hll">    <span class="p">}),</span>
+</span><span class="hll">    <span class="nx">buildService</span><span class="p">({</span> <span class="nx">url</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="k">new</span> <span class="nx">RemoteGraphQLDataSource</span><span class="p">({</span>
+</span><span class="hll">        <span class="nx">url</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">willSendRequest</span><span class="p">({</span> <span class="nx">request</span><span class="p">,</span> <span class="nx">context</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">          <span class="nx">request</span><span class="p">.</span><span class="nx">http</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">set</span><span class="p">(</span>
+</span><span class="hll">            <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+</span><span class="hll">            <span class="nx">context</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span>
+</span><span class="hll">          <span class="p">);</span>
+</span><span class="hll">        <span class="p">}</span>
+</span><span class="hll">      <span class="p">});</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">});</span>
+
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>In the code above, we can see that there is an object parameter available to <code>willSendRequest</code>. From it, we destructure its <code>request</code> and <code>context</code> properties—<code>context</code> being the context set in the gateway and <code>request</code> being the request that will be sent to a subgraph.</p>
+<p>From there, we call <code>request.http.headers.set</code> and pass in <code>user</code> as the name of the header we want to set with the JSON-stringified <code>user</code> object from the gateway as its value. Alternatively, we’ll set it to <code>null</code> if it has not been added to the gateway context. After that, we’ll need to retrieve this header from the request once it reaches the accounts service to explicitly set the <code>user</code> context for this subgraph’s <code>ApolloServer</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+<span class="hll">  <span class="nx">schema</span><span class="o">:</span> <span class="nx">buildSubgraphSchema</span><span class="p">({</span> <span class="nx">typeDefs</span><span class="p">,</span> <span class="nx">resolvers</span> <span class="p">}),</span>
+</span><span class="hll">  <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">    <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">};</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">});</span>
+
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>When we run the <code>viewer</code> query now we can see that <code>null</code> is logged as expected.</p>
+<div class="boxout">
+<p><strong>Important caveat alert!</strong></p>
+<p>We decided to validate the JWT at the gateway and then pass the user data to the accounts service. The accounts service will not take any action to revalidate the original token and will later handle field-level authorization based on the user data provide by the gateway and assume that it has not been tampered with in transit.</p>
+<p>Doing so will simplify our project for instructional purposes, but in the real world, this approach would necessitate that, at a minimum, the subgraph endpoints are inaccessible to the outside world and that traffic between the gateway and subgraphs is encrypted.</p>
+<p>Alternatively, the original token could be forwarded from the gateway and validated in each subgraph. There would be a performance trade-off for this approach and you may want to ensure that the token is only validated once per operation for particularly complex operations that require multiple trips to a single subgraph.</p>
+</div>
+<h2 id="create-auth0-applications-apis-and-users">Create Auth0 Applications, APIs, and Users</h2>
+<p>Now we’ll need to set up four more things to authenticate users with Auth0 and send a real access token along with our API requests:</p>
+<ol type="1">
+<li>A new <em>application</em> in our Auth0 account to use with Explorer and the back-end application</li>
+<li>A new <em>API</em> in our Auth0 account to use with Explorer</li>
+<li>An initial Marked user set up in Auth0 so we can later validate their access token with the Express middleware</li>
+<li>A script to send a request with information about the application, API, and user we just created to obtain an access token that we can use when testing operations in Explorer that require authentication</li>
+</ol>
+<p>To authenticate requests from Explorer we must first register it as an application in Auth0. From the Applications page, click the “Create Application” button:</p>
+<p><img src="../../images/screenshots/auth0-initial-applications.png" alt="Initial Auth0 list of applications" /><br />
+</p>
+<p>We’ll give our application a descriptive name and then select the “Single Page Web Applications” type and click the “Create” button:</p>
+<p><img src="../../images/screenshots/auth-create-spa-application.png" alt="Pick an application name and choose the SPA type" /><br />
+</p>
+<p>Even though we’ll use this application with Explorer, it’s the option that is best suited for our purposes. Once the application is created and we jump to the “Settings” tab:</p>
+<p><img src="../../images/screenshots/auth0-spa-application-credentials.png" alt="Get the Client ID and Client Secret from the new application" /><br />
+</p>
+<p>We’ll see some important information that we need to send along with a request for an access token, including the Client ID and the Client Secret. Copy the Client ID and Secret values and add them to the <code>accounts/.env</code> file now:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/.env</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll">AUTH0_CLIENT_ID_GRAPHQL=XXXXXXXXXXXXXXXXXXXX
+</span><span class="hll">AUTH0_CLIENT_SECRET_GRAPHQL=XXXXXXXXXXXXXXXXXXXX
+</span><span class="hll">
+</span># ...
+</pre></div>
+
+<p>We need to make one small adjustment to the application’s settings before we leave this page. Scroll down to the bottom and click on “Advanced Settings” and then select “Grant Types.” Check the box for “Password.” We can disregard the warning about not using the Password grant type with public applications because for now, we’ll only use this application to generate an access token to use with Explorer in the development environment.</p>
+<p>Later, we’ll also use this application to assist with resetting user account passwords, but that request will be safely contained within the server. Click “Save Changes” now:</p>
+<p><img src="../../images/screenshots/auth0-application-advanced-settings.png" alt="Add the password grant type in the application’s advanced settings in Auth0" /><br />
+</p>
+<p>Next we’ll create an Auth0 API, which is an entity that represents some external resource that can accept and respond to protected resource requests. Navigate to the APIs page and click the “Create API” button:</p>
+<p><img src="../../images/screenshots/auth0-initial-apis.png" alt="Initial list of Auth0 APIs" /><br />
+</p>
+<p>For the identifier, we must use the same <code>AUTH0_AUDIENCE</code> environment variable value that we previously set:</p>
+<p><img src="../../images/screenshots/auth0-create-api.png" alt="Pick a name, identifier, and signing algorithm for the API" /><br />
+</p>
+<p>Once the API is created we will jump to the “Settings” tab:</p>
+<p><img src="../../images/screenshots/auth0-new-api-settings.png" alt="The settings view for the newly created API" /><br />
+</p>
+<p>Next, we’ll head to the Users page and click the “Create User” button:</p>
+<p><img src="../../images/screenshots/auth0-initial-users.png" alt="Create your first user" /><br />
+</p>
+<p>Fill in the form with your email and password:</p>
+<p><img src="../../images/screenshots/auth0-create-user.png" alt="Add user email and password to create user" /><br />
+</p>
+<p>Ideally, you will use a real email address for this so you can see what the email verification from Auth0 looks like. You can leave the connection as the “Username-Password-Authentication” option. Note that the default password strength requirements for an Auth0 database connection require that passwords are at least eight characters in length with:</p>
+<ul>
+<li>At least one lowercase alphabetical character</li>
+<li>At least one uppercase alphabetical character</li>
+<li>At least one numeric character</li>
+<li>At least one special character</li>
+</ul>
+<p>After saving, you’ll be redirected to the User Details for your new user:</p>
+<p><img src="../../images/screenshots/auth0-user-settings.png" alt="User details page for the new user in Auth0" /><br />
+</p>
+<p>If you used a real email address for the user account, then you will receive an email to verify your account shortly. If you like, you can verify the account and when you return to Auth0 you will see that the user email has changed from “pending” to “verified.”</p>
+<h2 id="generate-a-token-for-explorer">Generate a Token for Explorer</h2>
+<p>We have now completed three of the four required steps to retrieve an access token from Auth0 to use with Explorer. In the final step, we’ll generate an access token for the new user to send with their requests. We won’t be building a real user interface to authenticate users with the Marked app, so we’ll need to take a different approach to log them in and get an access token to include in requests sent from Explorer.</p>
+<p>To do that, we’ll write a script that we can run from the accounts service. This script will send a request to Auth0 with all of the necessary information about the application, API, and user we just created, and then return the user’s access token for us to use in Explorer.</p>
+<p>Thinking ahead, we’ll place the code that takes care of fetching the access token from Auth0 in a function outside of the script’s file because we’ll need to reuse it again later in this chapter when we create a mutation to update a user’s password. Before we get started with the script, we’ll add two new variables to the <code>.env</code> file in <code>accounts</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/.env</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll">AUTH0_AUDIENCE=http://localhost:4000/
+</span>AUTH0_CLIENT_ID_GRAPHQL=XXXXXXXXXXXXXXXXXXXX
+AUTH0_CLIENT_SECRET_GRAPHQL=XXXXXXXXXXXXXXXXXXXX
+<span class="hll">AUTH0_DOMAIN=markedapp.us.auth0.com
+</span>
+# ...
+</pre></div>
+
+<p>Again, the <code>AUTH0_DOMAIN</code> variable above is for demonstration purposes, so be sure to update it to your unique tenant domain. Next, install the <code>request</code> library in <code>accounts</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i request@2.88.2
+</pre></div>
+
+<p>Now we’ll create a <code>utils</code> directory in <code>accounts/src</code> and add a <code>getToken.js</code> file to it with the following code:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/utils/getToken.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">util</span> <span class="nx">from</span> <span class="s2">&quot;util&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="nx">request</span> <span class="nx">from</span> <span class="s2">&quot;request&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">requestPromise</span> <span class="o">=</span> <span class="nx">util</span><span class="p">.</span><span class="nx">promisify</span><span class="p">(</span><span class="nx">request</span><span class="p">);</span>
+
+<span class="nx">async</span> <span class="kd">function</span> <span class="nx">getToken</span><span class="p">(</span><span class="nx">username</span><span class="p">,</span> <span class="nx">password</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">options</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="nx">method</span><span class="o">:</span> <span class="s2">&quot;POST&quot;</span><span class="p">,</span>
+    <span class="nx">url</span><span class="o">:</span> <span class="sb">`https://</span><span class="si">${</span><span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_DOMAIN</span><span class="si">}</span><span class="sb">/oauth/token`</span><span class="p">,</span>
+    <span class="nx">headers</span><span class="o">:</span> <span class="p">{</span> 
+      <span class="s2">&quot;content-type&quot;</span><span class="o">:</span> <span class="s2">&quot;application/x-www-form-urlencoded&quot;</span> 
+    <span class="p">},</span>
+    <span class="nx">form</span><span class="o">:</span> <span class="p">{</span>
+      <span class="nx">audience</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_AUDIENCE</span><span class="p">,</span>
+      <span class="nx">client_id</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_CLIENT_ID_GRAPHQL</span><span class="p">,</span>
+      <span class="nx">client_secret</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_CLIENT_SECRET_GRAPHQL</span><span class="p">,</span>
+      <span class="nx">grant_type</span><span class="o">:</span> <span class="s2">&quot;http://auth0.com/oauth/grant-type/password-realm&quot;</span><span class="p">,</span>
+      <span class="nx">password</span><span class="p">,</span>
+      <span class="nx">realm</span><span class="o">:</span> <span class="s2">&quot;Username-Password-Authentication&quot;</span><span class="p">,</span>
+      <span class="nx">scope</span><span class="o">:</span> <span class="s2">&quot;openid&quot;</span><span class="p">,</span>
+      <span class="nx">username</span>
+    <span class="p">}</span>
+  <span class="p">};</span>
+
+  <span class="kr">const</span> <span class="nx">response</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">requestPromise</span><span class="p">(</span><span class="nx">options</span><span class="p">).</span><span class="k">catch</span><span class="p">(</span><span class="nx">error</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span><span class="nx">error</span><span class="p">);</span>
+  <span class="p">});</span>
+  <span class="kr">const</span> <span class="nx">body</span> <span class="o">=</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">body</span><span class="p">);</span>
+  <span class="kr">const</span> <span class="p">{</span> <span class="nx">access_token</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">body</span><span class="p">;</span>
+
+  <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nx">access_token</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span>
+      <span class="nx">body</span><span class="p">.</span><span class="nx">error_description</span> <span class="o">||</span> <span class="s2">&quot;Cannot retrieve access token.&quot;</span>
+    <span class="p">);</span>
+  <span class="p">}</span>
+
+  <span class="k">return</span> <span class="nx">access_token</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">getToken</span><span class="p">;</span>
+</pre></div>
+
+<p>That’s a hefty block of code, so let’s break it down piece by piece. The <code>request</code> module is used to send a <code>POST</code> request to the <code>/oauth/token</code> endpoint of Auth0’s Authentication API (using your tenant’s domain). The <code>util</code> library is used to wrap <code>request</code> so that it returns a promise. The wrapped request can then be used with <code>async</code>/<code>await</code>.</p>
+<p>The user’s username (which is their email address in our case) and password are passed into the function as arguments and are included as <code>form</code> data along with some additional data to authenticate our request with Auth0.</p>
+<p>When a response is received we parse it and check if it contains an access token and then return it. If there’s no access token in the body of the response, then we throw an error because something went wrong. We’ll put the <code>getToken</code> function to use by creating an <code>authenticateUser.js</code> file in the new <code>utils</code> directory with this code in it:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/utils/authenticateUser.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">getToken</span> <span class="nx">from</span> <span class="s2">&quot;./getToken.js&quot;</span><span class="p">;</span>
+
+<span class="p">(</span><span class="nx">async</span> <span class="kd">function</span> <span class="p">()</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="p">[</span><span class="nx">email</span><span class="p">,</span> <span class="nx">password</span><span class="p">]</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">argv</span><span class="p">.</span><span class="nx">slice</span><span class="p">(</span><span class="mi">2</span><span class="p">);</span>
+  <span class="kr">const</span> <span class="nx">access_token</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">getToken</span><span class="p">(</span><span class="nx">email</span><span class="p">,</span> <span class="nx">password</span><span class="p">).</span><span class="k">catch</span><span class="p">(</span><span class="nx">error</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">error</span><span class="p">);</span>
+  <span class="p">});</span>
+  <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">access_token</span><span class="p">);</span>
+<span class="p">})();</span>
+</pre></div>
+
+<p>In the script above, we slice all of the items after the second index in the <code>process.argv</code> array to destructure the <code>email</code> and <code>password</code> arguments that we will pass to the <code>getToken</code> function (the first two arguments in the <code>process.argv</code> array are the path to Node.js and the path to the script we are executing).</p>
+<p>Open a new terminal, <code>cd</code> into the <code>accounts</code> directory, and run the script:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/</p>
+</div>
+<div class="highlight"><pre><span></span>node -r dotenv/config src/utils/authenticateUser.js hello@world.com superHARDpa55!
+</pre></div>
+
+<p>Don’t forget to replace the two placeholder arguments above with the real email address and password of the user you previously created in Auth0. If you see an <code>Unauthorized</code> error, then double-check and make sure that you added all of the Auth0-related environment variables correctly and that the email and password arguments are correct.</p>
+<p>Copy the access token that was logged to the console and head over to Explorer. Open the “Headers” panel below the operation editor and add an <code>Authorization</code> header with a value of <code>Bearer</code> followed by the token value that was copied from the terminal:</p>
+<p><img src="../../images/screenshots/explorer-headers.png" alt="Add the access token to the Headers panel in Explorer" /><br />
+</p>
+<p>If we now run our <code>viewer</code> query again we’ll see the decoded payload for the access token JWT logged to the console. It will look roughly like this:</p>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nx">iss</span><span class="o">:</span> <span class="s1">&#39;https://markedapp.us.auth0.com/&#39;</span><span class="p">,</span>
+  <span class="nx">sub</span><span class="o">:</span> <span class="s1">&#39;auth0|6253805defc16b0068478b45&#39;</span><span class="p">,</span>
+  <span class="nx">aud</span><span class="o">:</span> <span class="p">[</span>
+    <span class="s1">&#39;http://localhost:4000/&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;https://markedapp.us.auth0.com/userinfo&#39;</span>
+  <span class="p">],</span>
+  <span class="nx">iat</span><span class="o">:</span> <span class="mi">1653229222</span><span class="p">,</span>
+  <span class="nx">exp</span><span class="o">:</span> <span class="mi">1653315622</span><span class="p">,</span>
+  <span class="nx">azp</span><span class="o">:</span> <span class="s1">&#39;13sVZrbGp8ySe1sHYgOd44D9xxVGMI3F&#39;</span><span class="p">,</span>
+  <span class="nx">scope</span><span class="o">:</span> <span class="s1">&#39;openid&#39;</span><span class="p">,</span>
+  <span class="nx">gty</span><span class="o">:</span> <span class="s1">&#39;password&#39;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>What’s particularly useful to us in this token is the <code>sub</code> key—this is the Auth0 account ID of the currently logged-in user. We can use it to fetch their specific user data in the next section. Before moving on, we can clean up the <code>console.log(user);</code> line from the <code>viewer</code> resolver function because we will no longer need it now that we know we can retrieve a decoded token from Auth0.</p>
+<div class="boxout">
+<p>The JWT issued by Auth0 is only valid for one day, so you will need to rerun this script to generate a new token to use with Explorer every 24 hours.</p>
+</div>
+<h2 id="the-auth0-management-api">The Auth0 Management API</h2>
+<p>Beyond passing data about a logged-in user into resolvers, we need to perform various operations in Auth0 via these functions as well. Specifically, we need to read and write account data via the GraphQL API rather than just doing these things in the Auth0 dashboard. For that, we will need to make use of <a href="https://auth0.com/docs/api/management/v2">Auth0’s Management API</a>. The Management API is meant to be used by secure back-end servers and other trusted parties only (so not for front-end clients!) and it allows us to perform a variety of tasks that would otherwise be performed directly through the Auth0 dashboard. That means that this API is very powerful, so it’s important to use it with care.</p>
+<p>Let’s take a quick look at this API’s documentation and see what the <code>users</code> endpoint can do. Scanning down the left-hand menu of the page we can see exactly the kinds of things we’ll need to do to perform CRUD operations on user data in the accounts service’s resolvers:</p>
+<p><img src="../../images/screenshots/auth0-mgmt-api-docs-users.png" alt="Users endpoint documentation for the Auth0 Management API" /><br />
+</p>
+<p>To use the Management API, we need to create a dedicated Auth0 application for this purpose. We’ll use the second application to authenticate our Auth0 account in the accounts service so we can access the Management API’s endpoints from the field resolvers. To clarify, we’re talking about authenticating our overarching Auth0 account here, and not the user account we created for Marked earlier in this chapter.</p>
+<p>From the Applications page, click the “Create Application” button again. Like before, give it a relevant name but this time choose “Machine to Machine Application” instead:</p>
+<p><img src="../../images/screenshots/auth0-create-m2m-application-for-management-api.png" alt="Name the new application and select the “Machine to Machine” type" /><br />
+</p>
+<p>Select the “Auth0 Management API” option to associate with this application:</p>
+<p><img src="../../images/screenshots/auth0-choose-management-api-for-m2m-application.png" alt="Associate the Auth0 Management API with the application" /><br />
+</p>
+<p>Now select scopes for the API’s access to the application. You can filter for “user” to select all the scopes that apply to reading, creating, updating, and deleting users and their metadata:</p>
+<p><img src="../../images/screenshots/auth0-management-api-application-scopes.png" alt="Pick only the user-related scopes for this API" /><br />
+</p>
+<p>After clicking the “Authorize” button we’ll navigate to the settings for the application:</p>
+<p><img src="../../images/screenshots/auth0-management-api-application-settings.png" alt="Settings view for the newly created application" /><br />
+</p>
+<p>Keep the Client ID and Client Secret values handy because we’ll need them in the next section to configure an Auth0 Management API client in the accounts service.</p>
+<h2 id="configure-auth0-with-node.js">Configure Auth0 with Node.js</h2>
+<p>To use the Auth0 Management API in the accounts service, we must install a Node.js client library for Auth0 in <code>accounts</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i auth0@2.40.0
+</pre></div>
+
+<p>This library will facilitate access to the Auth0 Management API by allowing us to instantiate an authenticated client for this purpose, and then call convenience methods on that client object to perform CRUD operations on Marked user accounts (rather than explicitly making various HTTP requests to the <code>/users</code> endpoint in our code).</p>
+<div class="boxout">
+<p>Please see <a href="http://auth0.github.io/node-auth0/">the API documentation for the Auth0 Node.js client</a> for more information on its full capabilities.</p>
+</div>
+<p>We’ll need to add two more variables to our <code>.env</code> file for the Client ID and Client Secret of the Management API application we just created:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/.env</p>
+</div>
+<div class="highlight"><pre><span></span># ...
+
+<span class="hll">AUTH0_CLIENT_ID_MGMT_API=XXXXXXXXXXXXXXXXXXXX
+</span><span class="hll">AUTH0_CLIENT_SECRET_MGMT_API=XXXXXXXXXXXXXXXXXXXX
+</span><span class="hll">
+</span># ...
+</pre></div>
+
+<p>Now we’ll add a <code>config</code> directory inside of <code>accounts/src</code> and add an <code>auth0.js</code> file to it with the following code:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/config/auth0.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ManagementClient</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;auth0&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">auth0</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ManagementClient</span><span class="p">({</span>
+  <span class="nx">domain</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_DOMAIN</span><span class="p">,</span>
+  <span class="nx">clientId</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_CLIENT_ID_MGMT_API</span><span class="p">,</span>
+  <span class="nx">clientSecret</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_CLIENT_SECRET_MGMT_API</span>
+<span class="p">});</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">auth0</span><span class="p">;</span>
+</pre></div>
+
+<p>With this code in place, we can finally fetch a real user in our <code>viewer</code> resolver. First, we’ll import the instance of the Auth0 <code>ManagementClient</code> we created in <code>auth0.js</code> at the top of the <code>resolvers.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="nx">auth0</span> <span class="nx">from</span> <span class="s2">&quot;../config/auth0.js&quot;</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="c1">// ...</span>
+</pre></div>
+
+<p>Now we will call the <code>getUser</code> method on the <code>auth0</code> object in the <code>viewer</code> resolver. We’ll set <code>user.sub</code> as the value for the <code>id</code> property in this method’s object argument. For now, let’s just log out what we get back from this method before updating what’s returned from the <code>viewer</code> resolver. You’ll see that the <code>getUser</code> method returns a promise, so we use the <code>await</code> keyword with it and then update the <code>viewer</code> resolver to be <code>async</code> now:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="nx">async</span> <span class="nx">viewer</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">viewer</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">getUser</span><span class="p">({</span> <span class="nx">id</span><span class="o">:</span> <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span> <span class="p">});</span>
+</span><span class="hll">      <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="nx">viewer</span><span class="p">);</span>
+</span>      <span class="k">return</span> <span class="nx">accounts</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Run the <code>viewer</code> query in Explorer again. You will see an object with the following shape logged to the console where the accounts service is running:</p>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="err">created_at:</span> <span class="err">&#39;2022-04-11T01:11:57.126Z&#39;,</span>
+  <span class="err">email:</span> <span class="err">&#39;marked@mandiwise.com&#39;,</span>
+  <span class="err">email_verified:</span> <span class="err">false,</span>
+  <span class="err">identities:</span> <span class="err">[</span>
+    <span class="err">{</span>
+      <span class="err">user_id:</span> <span class="err">&#39;6253805defc16b0068478b45&#39;,</span>
+      <span class="err">provider:</span> <span class="err">&#39;auth0&#39;,</span>
+      <span class="err">connection:</span> <span class="err">&#39;Username-Password-Authentication&#39;,</span>
+      <span class="err">isSocial:</span> <span class="err">false</span>
+    <span class="p">}</span>
+  <span class="err">],</span>
+  <span class="err">name:</span> <span class="err">&#39;marked@mandiwise.com&#39;,</span>
+  <span class="err">nickname:</span> <span class="err">&#39;marked&#39;,</span>
+  <span class="err">picture:</span> <span class="err">&#39;https://s.gravatar.com/avatar/f</span><span class="mi">0242</span><span class="err">cad</span><span class="mi">4</span><span class="err">a</span><span class="mi">64</span><span class="err">bb</span><span class="mi">14314</span><span class="err">ab</span><span class="mi">1</span><span class="err">ca</span><span class="mf">791286e7</span><span class="err">?s=</span><span class="mi">480</span><span class="err">&amp;r=pg&amp;d=https%</span><span class="mi">3</span><span class="err">A%</span><span class="mi">2</span><span class="err">F%</span><span class="mi">2</span><span class="err">Fcdn.auth</span><span class="mi">0</span><span class="err">.com%</span><span class="mi">2</span><span class="err">Favatars%</span><span class="mi">2</span><span class="err">Fma.png&#39;,</span>
+  <span class="err">updated_at:</span> <span class="err">&#39;</span><span class="mi">2022-04-10</span><span class="err">T</span><span class="mi">21</span><span class="err">:</span><span class="mi">54</span><span class="err">:</span><span class="mf">40.130</span><span class="err">Z&#39;,</span>
+  <span class="err">user_id:</span> <span class="err">&#39;auth</span><span class="mi">0</span><span class="err">|</span><span class="mi">6253805</span><span class="err">defc</span><span class="mi">16</span><span class="err">b</span><span class="mi">0068478</span><span class="err">b</span><span class="mi">45</span><span class="err">&#39;,</span>
+  <span class="err">last_ip:</span> <span class="err">&#39;</span><span class="mi">2001</span><span class="err">:</span><span class="mi">56</span><span class="err">a:f</span><span class="mi">868</span><span class="err">:ab</span><span class="mi">00</span><span class="err">:</span><span class="mi">2140</span><span class="err">:fbe</span><span class="mi">5</span><span class="err">:</span><span class="mi">4</span><span class="err">d</span><span class="mi">76</span><span class="err">:</span><span class="mf">5e05</span><span class="err">&#39;,</span>
+  <span class="err">last_login:</span> <span class="err">&#39;</span><span class="mi">2022-04-10</span><span class="err">T</span><span class="mi">21</span><span class="err">:</span><span class="mi">54</span><span class="err">:</span><span class="mf">40.130</span><span class="err">Z&#39;,</span>
+  <span class="err">logins_count:</span> <span class="mi">1</span>
+<span class="err">}</span>
+</pre></div>
+
+<p>Now that we know what user account data Auth0 provides we can build out our <code>Account</code> type with a few more fields and create the corresponding resolvers too.</p>
+<h2 id="add-new-account-fields">Add New <code>Account</code> Fields</h2>
+<p>Our accounts service will only be responsible for managing basic account-related information for users such as their email addresses and the time their accounts were created. All of this data will be stored in and retrieved from Auth0. Additional user metadata will be managed by the profiles service in a later chapter.</p>
+<p>Let’s update our <code>Account</code> type with a new <code>createdAt</code> field. We’ll also add two new queries to retrieve all user accounts and fetch a single user account by its ID. Lastly, and as a best practice, we will begin adding documentation to our schema with field and type descriptions:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">An account is a unique Auth0 user.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="kt">type</span> <span class="k">Account</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+<span class="hll">  <span class="s2">&quot;The unique ID associated with the account.&quot;</span>
+</span>  id: <span class="k">ID</span><span class="p">!</span>
+<span class="hll">  <span class="s2">&quot;The date and time the account was created.&quot;</span>
+</span><span class="hll">  createdAt: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The email associated with the account (must be unique).&quot;</span>
+</span>  email: <span class="k">String</span><span class="p">!</span>
+<span class="p">}</span>
+
+<span class="kt">type</span> <span class="k">Query</span> <span class="p">{</span>
+<span class="hll">  <span class="s2">&quot;Retrieves a single account by ID.&quot;</span>
+</span><span class="hll">  <span class="k">account</span><span class="p">(</span>id: <span class="k">ID</span><span class="p">!):</span> <span class="k">Account</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;Retrieves a list of accounts.&quot;</span>
+</span><span class="hll">  accounts: <span class="p">[</span><span class="k">Account</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;Retrieves the account of the currently logged-in user.&quot;</span>
+</span>  viewer: <span class="k">Account</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Next, we’ll need to add the resolvers for the new <code>createdAt</code>, <code>account</code>, and <code>accounts</code> fields. But before doing that, be sure to clean up the <code>accounts</code> constant and its dummy data in the <code>resolvers.js</code> file because we’ll only work with real Auth0 data moving forward. First, we’ll add the <code>account</code> and <code>accounts</code> resolvers and also update the <code>viewer</code> resolver to return real data:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">auth0</span> <span class="nx">from</span> <span class="s2">&quot;../config/auth0.js&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="nx">account</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">id</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">getUser</span><span class="p">({</span> <span class="nx">id</span> <span class="p">});</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">accounts</span><span class="p">()</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">getUsers</span><span class="p">();</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">viewer</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">if</span> <span class="p">(</span><span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">getUser</span><span class="p">({</span> <span class="nx">id</span><span class="o">:</span> <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span> <span class="p">});</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">null</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Note the changes made to the <code>viewer</code> resolver. As per our schema, the <code>viewer</code> query can be <code>null</code>, so if we check the context for the <code>user</code> and if either the <code>user</code> object or its <code>sub</code> property is empty, then we return <code>null</code> from the resolver. Otherwise, we can use the <code>user.sub</code> value to fetch the account data for the currently authenticated user. Returning <code>null</code> from this resolver would indicate that the request is being made from an unauthenticated user, which could be helpful for control flow in client applications. Also, note that we have removed the <code>async</code> keyword from the <code>viewer</code> resolver because we are directly returning the promise returned by <code>getUser</code> from it now.</p>
+<p>Next, we’ll update the field resolvers for <code>Account</code>. We have to add resolvers for the <code>id</code> and <code>createdAt</code> fields to correctly map the data from the Auth0 account object that was retrieved by the parent <code>account</code> field:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">auth0</span> <span class="nx">from</span> <span class="s2">&quot;../../config/auth0&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="nx">Account</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">__resolveReference</span><span class="p">(</span><span class="nx">reference</span><span class="p">)</span> <span class="p">{</span>
+<span class="hll">      <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">getUser</span><span class="p">({</span> <span class="nx">id</span><span class="o">:</span> <span class="nx">reference</span><span class="p">.</span><span class="nx">id</span> <span class="p">});</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">id</span><span class="p">(</span><span class="nx">account</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">account</span><span class="p">.</span><span class="nx">user_id</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">createdAt</span><span class="p">(</span><span class="nx">account</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">account</span><span class="p">.</span><span class="nx">created_at</span><span class="p">;</span>
+</span>    <span class="p">}</span>
+  <span class="p">},</span>
+
+  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Note that in the code above we must update the <code>__resolveReference</code> method in the <code>Account</code> resolvers to fetch a single user account from Auth0 when the <code>Account</code> entity is referenced by another subgraph now. It does this using the account <code>id</code> property sent in the <code>reference</code> object by the referencing subgraph. From Explorer, rerun the <code>viewer</code> query with all of its fields:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Viewer</span> <span class="p">{</span>
+  <span class="k">viewer</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">createdAt</span>
+    <span class="k">email</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;viewer&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|6253805defc16b0068478b45&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-10T21:18:42.494Z&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marked@mandiwise.com&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Now try running the <code>accounts</code> query:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Accounts</span> <span class="p">{</span>
+  <span class="k">accounts</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">createdAt</span>
+    <span class="k">email</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;accounts&quot;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|6253805defc16b0068478b45&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-10T21:18:42.494Z&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marked@mandiwise.com&quot;</span>
+      <span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>As expected, we get back an array containing the single user account that we created. Finally, try running the <code>account</code> query, passing the ID for the user account as the <code>id</code> argument:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Account</span><span class="p">(</span><span class="nv">$id</span><span class="p">:</span> <span class="k">ID</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">account</span><span class="p">(</span>id: <span class="nv">$id</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">createdAt</span>
+    <span class="k">email</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|6253805defc16b0068478b45&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|6253805defc16b0068478b45&quot;</span>
+      <span class="s2">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-10T21:18:42.494Z&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marked@mandiwise.com&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="add-a-createaccount-mutation">Add a <code>createAccount</code> Mutation</h2>
+<p>To finish off this chapter, we’ll use the Auth0 API to add the first mutations to the accounts service’s schema. First, we’ll add a mutation for creating a new user account with a corresponding Input Object type:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to create a new account.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">CreateAccountInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The new account&#39;s email (must be unique).&quot;</span>
+</span><span class="hll">  email: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The new account&#39;s password.&quot;</span>
+</span><span class="hll">  password: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;Creates a new account.&quot;</span>
+</span><span class="hll">  <span class="k">createAccount</span><span class="p">(</span>input: <span class="k">CreateAccountInput</span><span class="p">!):</span> <span class="k">Account</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>Next, we’ll add the resolver for the <code>createAccount</code> mutation to <code>resolvers.js</code>. For this resolver, we’ll use the <code>createUser</code> method from the Auth0 client library. This method expects us to pass in an object as an argument containing a connection type (in our case, <code>Username-Password-Authentication</code>) and an email and password for the new user:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">auth0</span> <span class="nx">from</span> <span class="s2">&quot;../../config/auth0&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">  <span class="p">},</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">createAccount</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">email</span><span class="p">,</span> <span class="nx">password</span> <span class="p">}</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">createUser</span><span class="p">({</span>
+</span><span class="hll">        <span class="nx">connection</span><span class="o">:</span> <span class="s2">&quot;Username-Password-Authentication&quot;</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">email</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">password</span>
+</span><span class="hll">      <span class="p">});</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Back in Explorer, the new mutation should be available now. Add the <code>createAccount</code> mutation to the operation editor and run it to confirm that a new user is created:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">CreateAccount</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">CreateAccountInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">createAccount</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">createdAt</span>
+    <span class="k">email</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;mark@markedmail.com&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;password&quot;</span><span class="p">:</span> <span class="s2">&quot;superHARDpa55!&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;createAccount&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|62536171efc16b006847886a&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-10T23:00:01.651Z&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;mark@markedmail.com&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="add-mutations-to-update-accounts">Add Mutations to Update Accounts</h2>
+<p>Now that we have a couple of user accounts to work with in Auth0, let’s add mutations that update the emails or passwords associated with them. If we take a look at the documentation for Auth0’s <code>updateUser</code> method, then we can see that it expects us to provide <code>params</code> for selecting which account to update (specifically, the user’s ID) as well as the <code>data</code> that we wish to update in that user’s account.</p>
+<p>As far as account management goes, users may need to update their password or their email. Typically, a user wouldn’t update both of these values at the same time so, as a schema design best practice, we will create two finer-grained mutations for these account actions rather than one all-encompassing update mutation. Creating purpose-built fields that are tailored for client use cases is one of the main advantages of using GraphQL to build an API!</p>
+<p>We’ll begin by adding two Input Object types to support these mutations:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to update an existing account&#39;s email.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">UpdateAccountEmailInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The unique ID associated with the account.&quot;</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The updated account email.&quot;</span>
+</span><span class="hll">  email: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to update an existing account&#39;s password. A current password and a new password are required to update a password.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">UpdateAccountPasswordInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The unique ID associated with the account.&quot;</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The updated account password.&quot;</span>
+</span><span class="hll">  newPassword: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The existing account password.&quot;</span>
+</span><span class="hll">  password: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>Now that our update-related Input Object types are ready we can create the new fields on the root <code>Mutation</code> type:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="err">#</span> <span class="p">...</span>
+
+<span class="nx">type</span> <span class="nx">Mutation</span> <span class="p">{</span>
+  <span class="s2">&quot;Creates a new account.&quot;</span>
+  <span class="nx">createAccount</span><span class="p">(</span><span class="nx">input</span><span class="o">:</span> <span class="nx">CreateAccountInput</span><span class="o">!</span><span class="p">)</span><span class="o">:</span> <span class="nx">Account</span><span class="o">!</span>
+<span class="hll">  <span class="s2">&quot;Updates an account&#39;s email.&quot;</span>
+</span><span class="hll">  <span class="nx">updateAccountEmail</span><span class="p">(</span><span class="nx">input</span><span class="o">:</span> <span class="nx">UpdateAccountEmailInput</span><span class="o">!</span><span class="p">)</span><span class="o">:</span> <span class="nx">Account</span><span class="o">!</span>
+</span><span class="hll">  <span class="s2">&quot;Updates an account&#39;s password.&quot;</span>
+</span><span class="hll">  <span class="nx">updateAccountPassword</span><span class="p">(</span><span class="nx">input</span><span class="o">:</span> <span class="nx">UpdateAccountPasswordInput</span><span class="o">!</span><span class="p">)</span><span class="o">:</span> <span class="nx">Account</span><span class="o">!</span>
+</span><span class="p">}</span>
+</pre></div>
+
+<p>Over in <code>resolvers.js</code>, we’ll import the access token-fetching function from <code>getToken.js</code> and also import <code>UserInputError</code> from <code>apollo-server</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+</span>
+<span class="kr">import</span> <span class="nx">auth0</span> <span class="nx">from</span> <span class="s2">&quot;../config/auth0.js&quot;</span><span class="p">;</span>
+<span class="hll"><span class="kr">import</span> <span class="nx">getToken</span> <span class="nx">from</span> <span class="s2">&quot;../utils/getToken.js&quot;</span><span class="p">;</span>
+</span>
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>We’ll use <code>getToken</code> here due to the sensitive nature of updating an account’s password. Rather than blindly overwriting the old password value with a new one, we want to check to make sure the person submitting the request knows the account’s existing password. To do this, we’ll verify that we can fetch an access token for the user account first using their old password, and then proceed with updating the password to the new one.</p>
+<p>First, we’ll implement the resolver for the <code>updateAccountEmail</code> mutation using the <code>updateUser</code> method on the <code>auth0</code> object:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">createAccount</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">email</span><span class="p">,</span> <span class="nx">password</span> <span class="p">}</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="c1">// ...</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">updateAccountEmail</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">id</span><span class="p">,</span> <span class="nx">email</span> <span class="p">}</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">updateUser</span><span class="p">({</span> <span class="nx">id</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">email</span> <span class="p">});</span>
+</span>    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Next, we’ll add the <code>updateAccountPassword</code> mutation, which will be a little more involved than the last one. Before updating the password we will fetch the user’s account data from Auth0 so we can get their email address. Once we have that we can test if their email and current password combination can be used to authenticate the user successfully. If one of the values is incorrect, we’ll throw a <code>UserInputError</code>, otherwise, we’ll proceed with updating the password:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+    <span class="nx">updateAccountEmail</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">id</span><span class="p">,</span> <span class="nx">email</span> <span class="p">}</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">updateUser</span><span class="p">({</span> <span class="nx">id</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">email</span> <span class="p">});</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">async</span> <span class="nx">updateAccountPassword</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">id</span><span class="p">,</span> <span class="nx">newPassword</span><span class="p">,</span> <span class="nx">password</span> <span class="p">}</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">getUser</span><span class="p">({</span> <span class="nx">id</span> <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">try</span> <span class="p">{</span>
+</span><span class="hll">        <span class="nx">await</span> <span class="nx">getToken</span><span class="p">(</span><span class="nx">user</span><span class="p">.</span><span class="nx">email</span><span class="p">,</span> <span class="nx">password</span><span class="p">);</span>
+</span><span class="hll">      <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;Email or existing password is incorrect.&quot;</span><span class="p">);</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">return</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">updateUser</span><span class="p">({</span> <span class="nx">id</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">password</span><span class="o">:</span> <span class="nx">newPassword</span> <span class="p">});</span>
+</span>    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>To test out our changes, run a mutation in GraphQL to update the email for an existing account:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">UpdateAccountEmail</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">UpdateAccountEmailInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">updateAccountEmail</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">email</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|62536171efc16b006847886a&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marcus@markedmail.com&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;updateAccountEmail&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|62536171efc16b006847886a&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marcus@markedmail.com&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Now try the <code>updateAccountPassword</code> mutation. We can’t query a user’s account password as a field on the <code>Account</code> type (and thankfully so, because this would be very dangerous!), so request their <code>id</code> field after the mutation instead to ensure the write operation was a success:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">UpdateAccountPassword</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">UpdateAccountPasswordInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">updateAccountPassword</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625349b2fa08af006b86b7f0&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;newPassword&quot;</span><span class="p">:</span> <span class="s2">&quot;superHARDpa56!&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;password&quot;</span><span class="p">:</span> <span class="s2">&quot;superHARDpa55!&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;updateAccountPassword&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|62536171efc16b006847886a&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="add-a-deleteaccount-mutation">Add a <code>deleteAccount</code> Mutation</h2>
+<p>Last but not least, we’ll take care of the “D” in CRUD for account operations by adding a <code>deleteAccount</code> mutation. This mutation will be the easiest to implement yet. If we take a look at the Auth0 API docs, we’ll see that its <code>deleteUser</code> method expects us to pass in a <code>params</code> object containing the user’s ID. First, we’ll add the mutation to the schema:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Deletes an account.&quot;</span>
+</span><span class="hll">  <span class="k">deleteAccount</span><span class="p">(</span>id: <span class="k">ID</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Note that this mutation will return <code>true</code> or <code>false</code> to indicate whether the operation was a success. Now we can add its resolver:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">    <span class="nx">async</span> <span class="nx">deleteAccount</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">id</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">try</span> <span class="p">{</span>
+</span><span class="hll">        <span class="nx">await</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">deleteUser</span><span class="p">({</span> <span class="nx">id</span> <span class="p">});</span>
+</span><span class="hll">        <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">      <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">    <span class="p">},</span>
+</span>    <span class="c1">// ...</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Note that we must mark this resolver as <code>async</code> because we have to wait for the promise to resolve as we wait for a response for the Auth0 API before returning the boolean value. Heading back over to Explorer, we can run our <code>deleteAccount</code> mutation on the user we’ve been working with:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">DeleteAccount</span><span class="p">(</span><span class="nv">$id</span><span class="p">:</span> <span class="k">ID</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">deleteAccount</span><span class="p">(</span>id: <span class="nv">$id</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|62536171efc16b006847886a&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;deleteAccount&quot;</span><span class="p">:</span> <span class="kc">true</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Try running the <code>accounts</code> query now to double-check that the account was deleted.</p>
+<h2 id="summary">Summary</h2>
+<p>We accomplished a great deal in this chapter—from signing up for and configuring Auth0, to adding Express middleware to verify JWTs, and finally adding essential queries and mutations that allow us to read, add, update, and remove Auth0-based user accounts from Explorer using our API. With basic authentication and user account management functionality in place, we’re ready to begin building out the API’s authorization layer in the next chapter. But first, we will do some light refactoring in the accounts service and also create a shared library for types and directives that will used across multiple subgraph schemas.</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

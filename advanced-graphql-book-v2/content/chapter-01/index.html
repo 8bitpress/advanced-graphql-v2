@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#apollo-federation-and-gateway">Chapter 1: Apollo Federation and Gateway</a>
+<ul>
+<li><a href="#a-basic-apollo-server">A Basic Apollo Server</a></li>
+<li><a href="#organize-the-server-files">Organize the Server Files</a></li>
+<li><a href="#why-use-apollo-federation">Why Use Apollo Federation?</a></li>
+<li><a href="#but-first-more-refactoring">But First, More Refactoring</a></li>
+<li><a href="#compose-a-subgraph-into-the-gateway">Compose a Subgraph into the Gateway</a></li>
+<li><a href="#the-first-entity">The First Entity</a></li>
+<li><a href="#optional-supergraph-composition-with-the-rover-cli">Optional: Supergraph Composition with the Rover CLI</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="apollo-federation-and-gateway">Chapter 1: Apollo Federation and Gateway</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Configure a basic development environment</li>
+<li>Set up Express and instantiate a new <code>ApolloServer</code></li>
+<li>Explore Apollo Federation and its use cases</li>
+<li>Create an Apollo Gateway with a single subgraph schema composed into its supergraph schema</li>
+</ul>
+</div>
+<h2 id="a-basic-apollo-server">A Basic Apollo Server</h2>
+<p>One of the main value propositions of Apollo Federation is that it allows you to expose a single GraphQL endpoint to clients while allowing back-end service teams to each manage a logical subsection of the broader schema. From a client developer’s perspective, they send their requests to a single GraphQL API, but behind the scenes, we have the flexibility to distribute ownership of the schema’s type definitions while composing them together in a single, federated API.</p>
+<p>By the end of this book, we’ll have an Apollo Server configured for the gateway service plus each of the four subgraph services that we’ll eventually build out (refer to the Preface for a detailed architectural overview of the Marked app). To get started, we’ll set up a basic Apollo Server, then make some modifications to it to work in conjunction with the <code>@apollo/gateway</code> package, and finally create our first subgraph for user accounts data.</p>
+<p>We’ll begin by creating a top-level project directory to house all of the code for the back-end services we’ll build for this project. Inside of that new directory, create a subdirectory called <code>gateway</code>. From inside the new <code>gateway</code> subdirectory, run the following commands to create a boilerplate <code>package.json</code> file and install the initial packages we need to set up Apollo Server:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span>npm init --yes
+npm i apollo-server-express@3.7.0 dotenv@16.0.0 express@4.17.3 graphql@16.5.0
+npm i -D nodemon@2.0.15
+</pre></div>
+
+<p>Eventually, we’ll need to use middleware with this server to support user authentication, so instead of installing the <code>apollo-server</code> package, we installed <code>apollo-server-express</code> and <code>express</code>. Doing so will allow us to use Express to integrate Node.js middleware with Apollo Server later on.</p>
+<p>We also need the <code>graphql</code> peer dependency that’s required by Apollo (it’s the library used to build a schema and to execute queries against that schema). We also install the <code>dotenv</code> package to configure environment variables for this service. Lastly, we install <code>nodemon</code> as a development dependency to restart the Node.js process when changes are saved in our project’s <code>gateway</code> files.</p>
+<p>This project will use <code>import</code> and <code>export</code> syntax to load ES modules so we’ll need to declare that in the <code>package.json</code> file by setting the <code>type</code> property to <code>module</code>. We’ll also replace the auto-generated <code>scripts</code> with one to start the gateway using <code>nodemon</code> with the <code>dotenv</code> module preloaded using the <code>-r</code> flag as follows:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/package.json</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">  <span class="s2">&quot;type&quot;</span><span class="o">:</span> <span class="s2">&quot;module&quot;</span><span class="p">,</span>
+</span>  <span class="s2">&quot;scripts&quot;</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="s2">&quot;dev&quot;</span><span class="o">:</span> <span class="s2">&quot;nodemon -r dotenv/config -e env,graphql,js ./src/index.js&quot;</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We don’t have a <code>src</code> subdirectory or an <code>index.js</code> file yet, so we’ll create <code>src</code> inside of <code>gateway</code> and then create an <code>index.js</code> file inside of that. This <code>index.js</code> file will be the main entry point for our gateway code.</p>
+<p>Additionally, we’ll create a <code>.env</code> file at the root of the <code>gateway</code> directory. With the help of the <code>dotenv</code> package we just installed, the <code>.env</code> file will allow us to define environment-specific variables for the Marked application. These values will be accessible on the <code>process.env</code> global variable, which is loaded into the Node.js process at runtime.</p>
+<div class="boxout">
+<p>Note that <code>.env</code> files often contain sensitive values such as API keys, so if you’re using Git for version control in this project, then be sure to adhere to the best practice of adding the <code>.env</code> file to your <code>.gitignore</code> file before your next commit.</p>
+</div>
+<p>Our first two variables will be <code>NODE_ENV</code> to identify our environment as <code>development</code> and <code>PORT</code> to identify the port where our GraphQL API may be accessed:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/.env</p>
+</div>
+<div class="highlight"><pre><span></span>NODE_ENV=development
+PORT=4000
+</pre></div>
+
+<p>Next, we’ll configure a basic, non-federated Apollo/Express server in the <code>index.js</code> file first, which will ultimately be used for the gateway. We’ll start by importing the required modules, getting the <code>PORT</code> environment variable value, and creating a new Express app inside of it:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">http</span> <span class="nx">from</span> <span class="s2">&quot;http&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-express&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServerPluginDrainHttpServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-core&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">express</span> <span class="nx">from</span> <span class="s2">&quot;express&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+<span class="kr">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nx">express</span><span class="p">();</span>
+<span class="kr">const</span> <span class="nx">httpServer</span> <span class="o">=</span> <span class="nx">http</span><span class="p">.</span><span class="nx">createServer</span><span class="p">(</span><span class="nx">app</span><span class="p">);</span>
+
+<span class="c1">// We&#39;ll create an Apollo Server here next...</span>
+</pre></div>
+
+<p>In the code above, note that the <code>ApolloServerPluginDrainHttpServer</code> plugin will allow us gracefully shut down Apollo Server when using one of its Node.js integrations, such as Express. For initial testing purposes, we’ll add a single <code>hello</code> field to the root <code>Query</code> type and create a map of resolver functions for the schema:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="kr">const</span> <span class="nx">typeDefs</span> <span class="o">=</span> <span class="nx">gql</span><span class="sb">`</span>
+</span><span class="hll"><span class="sb">  type Query {</span>
+</span><span class="hll"><span class="sb">    hello: String</span>
+</span><span class="hll"><span class="sb">  }</span>
+</span><span class="hll"><span class="sb">`</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">hello</span><span class="p">()</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="s2">&quot;world&quot;</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">};</span>
+</span></pre></div>
+
+<p>Next, we’ll instantiate a new <code>ApolloServer</code>, integrate it with the Express app defined above by adding it to the app’s middleware, and then listen for connections on port <code>4000</code>:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+</span><span class="hll">  <span class="nx">typeDefs</span><span class="p">,</span>
+</span><span class="hll">  <span class="nx">resolvers</span><span class="p">,</span>
+</span><span class="hll">  <span class="nx">plugins</span><span class="o">:</span> <span class="p">[</span><span class="nx">ApolloServerPluginDrainHttpServer</span><span class="p">({</span> <span class="nx">httpServer</span> <span class="p">})]</span>
+</span><span class="hll"><span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll"><span class="nx">await</span> <span class="nx">gateway</span><span class="p">.</span><span class="nx">start</span><span class="p">();</span>
+</span><span class="hll"><span class="nx">gateway</span><span class="p">.</span><span class="nx">applyMiddleware</span><span class="p">({</span> <span class="nx">app</span><span class="p">,</span> <span class="nx">path</span><span class="o">:</span> <span class="s2">&quot;/&quot;</span> <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll"><span class="nx">await</span> <span class="k">new</span> <span class="nb">Promise</span><span class="p">(</span><span class="nx">resolve</span> <span class="p">=&gt;</span> <span class="nx">httpServer</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">},</span> <span class="nx">resolve</span><span class="p">));</span>
+</span><span class="hll"><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span>
+</span><span class="hll">  <span class="sb">`Gateway ready at http://localhost:</span><span class="si">${</span><span class="nx">port</span><span class="si">}${</span><span class="nx">gateway</span><span class="p">.</span><span class="nx">graphqlPath</span><span class="si">}</span><span class="sb">`</span>
+</span><span class="hll"><span class="p">);</span>
+</span></pre></div>
+
+<p>Now we can start our server by running the following command:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span>npm run dev
+</pre></div>
+
+<p>We can use Apollo Sandbox Explorer to check if the GraphQL API is working as expected at this point. The Explorer IDE is readily available through a running Apollo Server and can be accessed in a browser via the same URL that we use for the GraphQL endpoint itself. In our case, this URL is <a href="http://localhost:4000">http://localhost:4000</a> and once you reach the landing page you can access the Explorer user interface by clicking the “Query your server” button. If you’re new to Explorer but have used GraphQL Playground or GraphiQL in the past, then you should feel right at home.</p>
+<p>Once you’ve opened Explorer you should be able to see the <code>hello</code> field that we added to the root <code>Query</code> type along with an example operation. Click the blue button to submit the operation and confirm that you can see the following response:</p>
+<p><img src="../../images/screenshots/explorer-test-query.png" alt="Schema documentation in Apollo Sandbox Explorer" /><br />
+</p>
+<div class="boxout">
+<p>We are currently using Explorer inside of Apollo Sandbox, which means we don’t need to create an Apollo Studio account to run operations against our schema. In Chapter 9, we will create an Apollo Studio account to configure <a href="https://www.apollographql.com/docs/federation/managed-federation/overview/">managed federation</a> for our GraphQL API, which will also provide access to the full-featured version of Explorer.</p>
+</div>
+<h2 id="organize-the-server-files">Organize the Server Files</h2>
+<p>To set ourselves up for success later, we’ll do some file reorganization now because it will quickly become cumbersome to keep all of our gateway code inside of a single <code>index.js</code> file. Start by creating a <code>config</code> subdirectory in <code>gateway/src</code>, then create <code>apollo.js</code> and <code>app.js</code> files inside of <code>config</code>. We’ll move the following code from <code>index.js</code> to <code>apollo.js</code>, wrapping it in a function called <code>initGateway</code> and returning the <code>ApolloServer</code> object from it:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-express&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServerPluginDrainHttpServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-core&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">typeDefs</span> <span class="o">=</span> <span class="nx">gql</span><span class="sb">`</span>
+<span class="sb">    type Query {</span>
+<span class="sb">      hello: String</span>
+<span class="sb">    }</span>
+<span class="sb">  `</span><span class="p">;</span>
+
+  <span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+      <span class="nx">hello</span><span class="p">()</span> <span class="p">{</span>
+        <span class="k">return</span> <span class="s2">&quot;world&quot;</span><span class="p">;</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">};</span>
+
+  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+    <span class="nx">typeDefs</span><span class="p">,</span>
+    <span class="nx">resolvers</span><span class="p">,</span>
+    <span class="nx">plugins</span><span class="o">:</span> <span class="p">[</span><span class="nx">ApolloServerPluginDrainHttpServer</span><span class="p">({</span> <span class="nx">httpServer</span> <span class="p">})]</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we’ll move the <code>express</code> import and the <code>app</code> variable into <code>app.js</code>. We will also make <code>app</code> the default export from this file:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/app.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">express</span> <span class="nx">from</span> <span class="s2">&quot;express&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">app</span> <span class="o">=</span> <span class="nx">express</span><span class="p">();</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">app</span><span class="p">;</span>
+</pre></div>
+
+<p>Next, we can import the new modules at the top of <code>index.js</code>, call the <code>initGateway</code> function, and assign its return value to <code>gateway</code> instead. The updated <code>index.js</code> file will look like this now:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">http</span> <span class="nx">from</span> <span class="s2">&quot;http&quot;</span><span class="p">;</span>
+
+<span class="hll"><span class="kr">import</span> <span class="nx">app</span> <span class="nx">from</span> <span class="s2">&quot;./config/app.js&quot;</span><span class="p">;</span>
+</span><span class="hll"><span class="kr">import</span> <span class="nx">initGateway</span> <span class="nx">from</span> <span class="s2">&quot;./config/apollo.js&quot;</span><span class="p">;</span>
+</span>
+<span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+<span class="kr">const</span> <span class="nx">httpServer</span> <span class="o">=</span> <span class="nx">http</span><span class="p">.</span><span class="nx">createServer</span><span class="p">(</span><span class="nx">app</span><span class="p">);</span>
+<span class="hll"><span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">);</span>
+</span>
+<span class="nx">await</span> <span class="nx">gateway</span><span class="p">.</span><span class="nx">start</span><span class="p">();</span>
+<span class="nx">gateway</span><span class="p">.</span><span class="nx">applyMiddleware</span><span class="p">({</span> <span class="nx">app</span><span class="p">,</span> <span class="nx">path</span><span class="o">:</span> <span class="s2">&quot;/&quot;</span> <span class="p">});</span>
+
+<span class="nx">await</span> <span class="k">new</span> <span class="nb">Promise</span><span class="p">(</span><span class="nx">resolve</span> <span class="p">=&gt;</span> <span class="nx">httpServer</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">},</span> <span class="nx">resolve</span><span class="p">));</span>
+<span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span>
+  <span class="sb">`Gateway ready at http://localhost:</span><span class="si">${</span><span class="nx">port</span><span class="si">}${</span><span class="nx">gateway</span><span class="p">.</span><span class="nx">graphqlPath</span><span class="si">}</span><span class="sb">`</span>
+<span class="p">);</span>
+</pre></div>
+
+<p>And the current file structure in our project directory will now look like this:</p>
+<div class="highlight"><pre><span></span>gateway
+  ├── node_modules/
+  |   └── ...
+  ├── src/
+  |   └── config
+  |       └── apollo.js
+  |       └── app.js
+  |   └── index.js
+  ├── .env
+  ├── package.json
+  ├── package-lock.json
+</pre></div>
+
+<p>When we save the new files and the server restarts we should see that the GraphQL API works just as it did before.</p>
+<h2 id="why-use-apollo-federation">Why Use Apollo Federation?</h2>
+<p>Before we proceed with refactoring our code further to convert our existing Apollo Server into a gateway, it would be a good idea to pause and consider why we would want to do this in the first place. We have a perfectly viable GraphQL API already up and running, so how do we know that using Apollo Federation now will be the right choice moving forward?</p>
+<p>One of the most compelling reasons to create any kind of GraphQL API is that it allows us to expose a single API endpoint (with any number of data sources behind it) and query data in a way that reflects the natural relationships between the nodes in the graph. However, as we express more and more pieces of data and their relationships through types and fields, it doesn’t take long for even a moderately complex GraphQL API to contain many different type definitions.</p>
+<p>A large number of type definitions doesn’t necessarily warrant a federated approach on its own, but there tends to be a positive correlation between the number of type definitions in a schema and the number of teams ultimately making contributions to that schema. And as more people contribute to the active evolution of the schema (that is one of the promises of GraphQL, after all!), a monolithic GraphQL API can quickly become a bottleneck for teams that need to ship updates to type definitions that are relevant to the services they maintain.</p>
+<p>Alternatively, multiple GraphQL APIs may simultaneously spring up within an organization, leading to duplication of effort to maintain them and inevitable type definition inconsistencies that makes it challenging for clients to query any GraphQL endpoint as a definitive source of truth for all of the data they require. In the end, both the monolithic and multiple GraphQL API options have obvious shortcomings, especially when used with well-worn approaches to distributed application development such as microservice architectures.</p>
+<p>Ideally, where multi-team collaboration is required, we would break up a GraphQL schema and assign ownership of type definitions to teams that already manage services and data sources that will be responsible for resolving those fields. Within their own <em>subgraphs</em>, teams should also be able to use types defined in other subgraphs as output types for fields and even augment those types with additional fields where needed. Lastly, these implementation details should be opaque to client developers. In other words, clients should be able to enjoy one of the key advantages of GraphQL and query a single endpoint as the source of truth for all of the data they require to render user interfaces. This is precisely what Apollo Federation allows us to do.</p>
+<p>So in short, there are two main architectural components specific to Apollo Federation:</p>
+<ul>
+<li>The <em>subgraph</em> services that each represent part of the overall graph</li>
+<li>A top-level <em>gateway</em> service whose API is composed of the subgraph schemas</li>
+</ul>
+<p>With these concepts in mind, we’re almost ready to set up our first subgraph service.</p>
+<div class="boxout">
+<p><strong>What about schema stitching?</strong></p>
+<p>Before Apollo Federation, there was an existing solution available to build these top-level gateway APIs with GraphQL called <em>schema stitching</em>. However, with schema stitching we may find ourselves wrestling with where to draw boundaries between services. Splitting services by type may seem intuitive at first but can get messy as we try to express complex relationships between the different types across services. It doesn’t take long for numerous “ID” fields to begin showing up in a service’s schema that look more like foreign key references than a real connection to a type from the other service. When fields such as this appear an API begins to lose some of the expressiveness at the heart of GraphQL.</p>
+<p>Additionally, schema stitching can require significant boilerplate code at the gateway level to effectively consolidate the graph, and that introduces a critical point of possible failure in an application’s architecture.</p>
+<p>Schema stitching was a step in the right direction for supporting distributed applications powered by multiple GraphQL APIs, but Apollo Federation presents a next-generation approach that allows us to declaratively define the gateway API in a way that cuts down on boilerplate and also allows a more natural separation of concerns between services.</p>
+</div>
+<h2 id="but-first-more-refactoring">But First, More Refactoring</h2>
+<p>Before we attempt to build a subgraph schema for use in the gateway, we’ll need to do more refactoring to tidy up our Apollo Server set-up in <code>apollo.js</code>. The first subgraph we create will handle user account data from Auth0. To begin, we’ll need to create an <code>accounts</code> subdirectory inside of the top-level project directory (it will be a sibling to <code>gateway</code>).</p>
+<div class="boxout">
+<p>It’s worth noting here that the gateway and subgraph services we create for the Marked application would likely be independent projects with different teams maintaining each of them in separate repositories. However, for simplicity’s sake, we’ll organize them in a single directory for all of our project’s code.</p>
+</div>
+<p>We’ll create a <code>src</code> directory inside of <code>accounts</code>, and then an <code>index.js</code> file and <code>graphql</code> subdirectory inside of <code>src</code>. Next, we’ll add <code>resolvers.js</code> and <code>schema.graphql</code> files inside of <code>accounts/src/graphql</code>. Our next step will be to move the root <code>Query</code> type and its single <code>hello</code> field into the new <code>schema.graphql</code> file. We are using a <code>.graphql</code> file extension and writing our type definitions using GraphQL’s Schema Definition Language (SDL) so there’s no need to wrap this code in the <code>gql</code> template literal tag or define a <code>typeDefs</code> variable here as we would if we were using a <code>.js</code> file for the type definitions instead.</p>
+<p>However, because we will be using the second version of the <a href="https://www.apollographql.com/docs/federation/federation-spec/">the Federation subgraph specification</a> in this project (also known as “Federation 2”), we must include a special <code>extend schema</code> definition at the top of the file:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">extend</span> <span class="k">schema</span>
+  <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/federation/v2.0&quot;, import: [&quot;@key&quot;</span><span class="p">])</span>
+
+<span class="kt">type</span> <span class="k">Query</span> <span class="p">{</span>
+  hello: <span class="k">String</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Without the <code>extend schema</code> definition in this file, Apollo Federation’s composition algorithm would assume this subgraph uses Federation 1 semantics. While both Federation 1 and Federation 2 subgraphs can be composed together, only subgraphs that include the previous definition can make use of Federation 2 semantics. The <code>@link</code> directive’s <code>import</code> argument indicates which of <a href="https://www.apollographql.com/docs/federation/federated-types/federated-directives">Apollo Federation’s directives</a> will be used in the subgraph schema. For the accounts services, we will only need to import the <code>@key</code> directive, but we will use other Federation 2 directives for subgraphs in subsequent chapters.</p>
+<p>Now we’ll move the <code>resolvers</code> constant from <code>apollo.js</code> into the new <code>resolvers.js</code> file and make <code>resolvers</code> the default export from it:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">hello</span><span class="p">()</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="s2">&quot;world&quot;</span><span class="p">;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>We’ll then create a <code>server</code> variable in the accounts service’s <code>index.js</code> file and instantiate a new <code>ApolloServer</code> here, passing in <code>typeDefs</code> and <code>resolvers</code> as we did previously in the gateway:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">typeDefs</span><span class="p">,</span>
+  <span class="nx">resolvers</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>You may have noticed that we instantiate an <code>ApolloServer</code> in the accounts service now but we haven’t yet imported this module at the top of the <code>index.js</code> file. We’ll need to create a <code>package.json</code> file for the accounts service too and install this dependency. We won’t need to add Express middleware in this service, so the basic <code>apollo-server</code> package will be sufficient. We can also omit the <code>ApolloServerPluginDrainHttpServer</code> plugin here because this is handled under the hood when using Apollo Server without the explicit Express integration. We will need to install <code>graphql</code>, <code>dotenv</code>, and <code>nodemon</code> here as well. Run the following commands directly inside the <code>accounts</code> directory to do that:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/</p>
+</div>
+<div class="highlight"><pre><span></span>npm init --yes
+npm i apollo-server@3.7.0 dotenv@16.0.0 graphql@16.5.0
+npm i -D nodemon@2.0.15
+</pre></div>
+
+<p>We’ll update the new <code>package.json</code> file to support ES modules and include a script to start the server with <code>nodemon</code>, also watching for changes to <code>.graphql</code> files this time:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/package.json</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">  <span class="s2">&quot;type&quot;</span><span class="o">:</span> <span class="s2">&quot;module&quot;</span><span class="p">,</span>
+</span>  <span class="s2">&quot;scripts&quot;</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="s2">&quot;dev&quot;</span><span class="o">:</span> <span class="s2">&quot;nodemon -r dotenv/config -e env,graphql,js ./src/index.js&quot;</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Now we can add the import for it at the top of <code>index.js</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">typeDefs</span><span class="p">,</span>
+  <span class="nx">resolvers</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>Each subgraph service will have a unique Node.js process and expose its portion of the API on a unique port. Let’s create a dedicated <code>.env</code> file in <code>accounts</code> and set its <code>NODE_ENV</code> and also set its <code>PORT</code> value to be a different port number than the gateway:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/.env</p>
+</div>
+<div class="highlight"><pre><span></span>NODE_ENV=development
+PORT=4001
+</pre></div>
+
+<p>Over in the accounts service’s <code>index.js</code> file, we’ll import the resolvers and define a <code>port</code> constant using the environment variable. Unlike before when we defined the type definitions as a string in a <code>.js</code> file, we put our type definitions in a <code>.graphql</code> file here so we have to read the contents of that file as a string and pass it into the <code>gql</code> function to parse it into a standard GraphQL AST. Note that we must also manually define the <code>__dirname</code> constant when using ES modules, so we will import some additional built-in modules to assist with that:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">dirname</span><span class="p">,</span> <span class="nx">resolve</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;path&quot;</span><span class="p">;</span>
+</span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">fileURLToPath</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;url&quot;</span><span class="p">;</span>
+</span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">readFileSync</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;fs&quot;</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+<span class="hll">
+</span><span class="hll"><span class="kr">import</span> <span class="nx">resolvers</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/resolvers.js&quot;</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kr">const</span> <span class="nx">__dirname</span> <span class="o">=</span> <span class="nx">dirname</span><span class="p">(</span><span class="nx">fileURLToPath</span><span class="p">(</span><span class="kr">import</span><span class="p">.</span><span class="nx">meta</span><span class="p">.</span><span class="nx">url</span><span class="p">));</span>
+</span><span class="hll"><span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kr">const</span> <span class="nx">typeDefs</span> <span class="o">=</span> <span class="nx">gql</span><span class="p">(</span>
+</span><span class="hll">  <span class="nx">readFileSync</span><span class="p">(</span><span class="nx">resolve</span><span class="p">(</span><span class="nx">__dirname</span><span class="p">,</span> <span class="s2">&quot;./graphql/schema.graphql&quot;</span><span class="p">),</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+</span><span class="hll"><span class="p">);</span>
+</span>
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">typeDefs</span><span class="p">,</span>
+  <span class="nx">resolvers</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>With that code in place, we can start the accounts service’s server by calling the <code>server</code> object’s <code>listen</code> method and logging a success message to the console:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="kr">const</span> <span class="p">{</span> <span class="nx">url</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">server</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">});</span>
+</span><span class="hll"><span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Accounts service ready at </span><span class="si">${</span><span class="nx">url</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+</span></pre></div>
+
+<p>Lastly, we’ll do some final clean-up by removing the <code>gql</code> import from <code>apollo-server-express</code> in the <code>apollo.js</code> file because we no longer need it here. We can also remove the <code>typeDefs</code> and <code>resolvers</code> that were passed directly into this <code>ApolloServer</code> before. The <code>apollo.js</code> file will currently look like this:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-express&quot;</span><span class="p">;</span>
+</span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServerPluginDrainHttpServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-core&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>  
+  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+    <span class="nx">plugins</span><span class="o">:</span> <span class="p">[</span><span class="nx">ApolloServerPluginDrainHttpServer</span><span class="p">({</span> <span class="nx">httpServer</span> <span class="p">})]</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>Unfortunately, our gateway server can’t be restarted quite yet because the <code>initGateway</code> function no longer returns a valid <code>ApolloServer</code> object. To address this error, we will finally convert this Apollo Server into a gateway in the next section.</p>
+<h2 id="compose-a-subgraph-into-the-gateway">Compose a Subgraph into the Gateway</h2>
+<p>It’s time to finish transforming the accounts service’s GraphQL API into a subgraph that can be composed into a schema that will be used by the Apollo Gateway. After that, we’ll set up the gateway-level GraphQL API so we can get that server back up and running. To begin, we’ll install the <code>@apollo/subgraph</code> package in the <code>accounts</code> directory:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i @apollo/subgraph@2.0.3
+</pre></div>
+
+<div class="boxout">
+<p>All of the code in this project complies with v2 of the Apollo Federation subgraph specification, so be sure to install <code>2.x</code> versions of the <code>@apollo/subgraph</code> and <code>@apollo/gateway</code> packages as you work through this book.</p>
+</div>
+<p>To make the accounts service’s schema federation-ready, we have to make some additions to our schema so that the gateway API can execute entity-related queries against it. Specifically, we need to add the following types, fields, and directives to the schema:</p>
+<div class="highlight"><pre><span></span><span class="k">scalar</span> <span class="k">_Any</span>
+<span class="k">scalar</span> <span class="k">_FieldSet</span>
+
+<span class="k">union</span> <span class="k">_Entity</span> <span class="p">=</span> <span class="c c-Singline"># a union of all types that use the @key directive</span>
+
+<span class="kt">type</span> <span class="k">_Service</span> <span class="p">{</span>
+  sdl: <span class="k">String</span>
+<span class="p">}</span>
+
+<span class="kt">extend</span> <span class="kt">type</span> <span class="k">Query</span> <span class="p">{</span>
+  <span class="k">_entities</span><span class="p">(</span>representations: <span class="p">[</span><span class="k">_Any</span><span class="p">!]!):</span> <span class="p">[</span><span class="k">_Entity</span><span class="p">]!</span>
+  _service: <span class="k">_Service</span><span class="p">!</span>
+<span class="p">}</span>
+
+<span class="kt">directive</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="k">FieldSet</span><span class="p">!</span>, resolvable: <span class="k">Boolean</span> <span class="p">=</span> <span class="kt">true</span><span class="p">)</span> <span class="k">repeatable</span> <span class="kt">on</span> <span class="k">OBJECT</span> <span class="p">|</span> <span class="k">INTERFACE</span>
+<span class="kt">directive</span> <span class="kt">@requires</span><span class="p">(</span>fields: <span class="k">FieldSet</span><span class="p">!)</span> <span class="kt">on</span> <span class="k">FIELD_DEFINITION</span>
+<span class="kt">directive</span> <span class="kt">@provides</span><span class="p">(</span>fields: <span class="k">FieldSet</span><span class="p">!)</span> <span class="kt">on</span> <span class="k">FIELD_DEFINITION</span>
+<span class="kt">directive</span> <span class="kt">@external</span> <span class="kt">on</span> <span class="k">OBJECT</span> <span class="p">|</span> <span class="k">FIELD_DEFINITION</span>
+<span class="kt">directive</span> <span class="kt">@shareable</span> <span class="kt">on</span> <span class="k">FIELD_DEFINITION</span> <span class="p">|</span> <span class="k">OBJECT</span>
+<span class="kt">directive</span> <span class="kt">@extends</span> <span class="kt">on</span> <span class="k">OBJECT</span> <span class="p">|</span> <span class="k">INTERFACE</span>
+<span class="kt">directive</span> <span class="kt">@override</span><span class="p">(</span>from: <span class="k">String</span><span class="p">!)</span> <span class="kt">on</span> <span class="k">FIELD_DEFINITION</span>
+<span class="kt">directive</span> <span class="kt">@inaccessible</span> <span class="kt">on</span>
+  <span class="p">|</span> <span class="k">FIELD_DEFINITION</span>
+  <span class="p">|</span> <span class="k">OBJECT</span>
+  <span class="p">|</span> <span class="k">INTERFACE</span>
+  <span class="p">|</span> <span class="k">UNION</span>
+  <span class="p">|</span> <span class="k">ENUM</span>
+  <span class="p">|</span> <span class="k">ENUM_VALUE</span>
+  <span class="p">|</span> <span class="k">SCALAR</span>
+  <span class="p">|</span> <span class="k">INPUT_OBJECT</span>
+  <span class="p">|</span> <span class="k">INPUT_FIELD_DEFINITION</span>
+  <span class="p">|</span> <span class="k">ARGUMENT_DEFINITION</span>
+</pre></div>
+
+<div class="boxout">
+<p>You can learn more about how these types, fields, and directives support entity resolution in the <a href="https://www.apollographql.com/docs/federation/federation-spec/">Apollo Federation specification</a>.</p>
+<p>By following this specification and adding support for these definitions to a schema, any GraphQL server in any language can also provide support for Apollo Federation.</p>
+</div>
+<p>Luckily, we don’t have to add these definitions to any of our subgraphs manually because the <code>@apollo/subgraph</code> package exposes a function called <code>buildSubgraphSchema</code> that does this work for us. In the accounts service’s <code>index.js</code> file we’ll import <code>buildSubgraphSchema</code> from <code>@apollo/subgraph</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">buildSubgraphSchema</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/subgraph&quot;</span><span class="p">;</span>
+</span>
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>And we also need to change how we instantiate the <code>ApolloServer</code> in that file by calling <code>buildSubgraphSchema</code>, passing the <code>typeDefs</code> and <code>resolvers</code> directly into that function as arguments, and then setting the return value for the <code>schema</code> option instead:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+<span class="hll">  <span class="nx">schema</span><span class="o">:</span> <span class="nx">buildSubgraphSchema</span><span class="p">({</span> <span class="nx">typeDefs</span><span class="p">,</span> <span class="nx">resolvers</span> <span class="p">})</span>
+</span><span class="p">});</span>
+
+<span class="kr">const</span> <span class="p">{</span> <span class="nx">url</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">server</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">});</span>
+<span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Accounts service ready at </span><span class="si">${</span><span class="nx">url</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+</pre></div>
+
+<p>The accounts service has finally reached a point where we can successfully start the server. From the <code>accounts</code> directory, run the following command:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/</p>
+</div>
+<div class="highlight"><pre><span></span>npm run dev
+</pre></div>
+
+<p>Because each subgraph is a self-contained GraphQL API, we can view and run queries against it in Explorer just as we did with the gateway. If you navigate to <a href="http://localhost:4001">http://localhost:4001</a> in your browser and launch Explorer, then you’ll see the <code>hello</code> field on the root <code>Query</code> type, along with the <code>_service</code> field that was added when we decorated our subgraph schema using the <code>buildSubgraphSchema</code> function (note that the <code>_entities</code> field won’t be added to the schema until we define an entity type later in the chapter).</p>
+<p>Let’s try running the following operation in Explorer:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="p">{</span>
+  <span class="k">_service</span> <span class="p">{</span>
+    <span class="k">sdl</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>The string value of the <code>sdl</code> field in the response will be quite long, but if we take a close look then we should see that the SDL string for the subgraph includes the <code>extend schema</code> and <code>Query</code> type definitions as expected, and it also includes definitions from the Federation 2 specification.</p>
+<div class="boxout">
+<p>Querying a subgraph endpoint as we just did can be useful in a development environment. However, it’s a best practice in production environments to restrict the outside world from sending requests directly to subgraphs and only allow the gateway to run operations against these endpoints.</p>
+</div>
+<p>Now that the accounts service’s subgraph is ready we can create an initial <em>supergraph</em> schema from it to pass into an <code>ApolloGateway</code>. A supergraph schema is a GraphQL schema that has been composed of one or more subgraphs. This schema won’t be exposed directly to clients but will include some additional metadata that allows an Apollo Gateway to know what subgraphs can resolve which fields while also allowing it to generate the client-friendly schema that we would expect to be served by the gateway API.</p>
+<p>There are a few different ways that we can generate a supergraph schema’s SDL for the gateway. The approach that we’ll take now is to instantiate a new <code>IntrospectAndCompose</code> object (provided by <code>@apollo/gateway</code>) and pass it into an <code>ApolloGateway</code> object as the <code>supergraphSdl</code> option. To do that, we’ll need to install the Apollo Gateway package in the <code>gateway</code> directory:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i @apollo/gateway@2.0.3
+</pre></div>
+
+<p>We will also set an environment variable for the <code>ACCOUNTS_ENDPOINT</code> in the gateway’s <code>.env</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/.env</p>
+</div>
+<div class="highlight"><pre><span></span>NODE_ENV=development
+PORT=4000
+<span class="hll">
+</span><span class="hll">ACCOUNTS_ENDPOINT=http://localhost:4001
+</span></pre></div>
+
+<p>We will then configure the <code>ApolloGateway</code> object as follows and set it as the <code>gateway</code> option in the <code>ApolloServer</code> object:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloGateway</span><span class="p">,</span> <span class="nx">IntrospectAndCompose</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/gateway&quot;</span><span class="p">;</span>
+</span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-express&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServerPluginDrainHttpServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-core&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+<span class="hll">  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+</span><span class="hll">    <span class="nx">supergraphSdl</span><span class="o">:</span> <span class="k">new</span> <span class="nx">IntrospectAndCompose</span><span class="p">({</span>
+</span><span class="hll">      <span class="nx">subgraphs</span><span class="o">:</span> <span class="p">[</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;accounts&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">ACCOUNTS_ENDPOINT</span> <span class="p">}</span>
+</span><span class="hll">      <span class="p">],</span>
+</span><span class="hll">      <span class="nx">pollIntervalInMs</span><span class="o">:</span> <span class="mi">1000</span>
+</span><span class="hll">    <span class="p">})</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span>  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+<span class="hll">    <span class="nx">gateway</span><span class="p">,</span>
+</span>    <span class="nx">plugins</span><span class="o">:</span> <span class="p">[</span><span class="nx">ApolloServerPluginDrainHttpServer</span><span class="p">({</span> <span class="nx">httpServer</span> <span class="p">})]</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>By providing a list of subgraph endpoints to <code>IntrospectAndCompose</code>, the gateway can introspect these endpoints—much like we did using the <code>_service</code> field above—and compose the supergraph SDL at runtime. We also set a poll interval of 1000 milliseconds so that the gateway will fetch updated SDLs from the subgraphs automatically as we develop them. Note that the <code>IntrospectAndCompose</code> option is suitable for development environments, but a better approach for production environments is to use <em>managed federation</em> with Apollo Studio, as we will see in Chapter 9.</p>
+<p>With that code in place, we’re ready to start up the gateway. Confirm that the accounts service is still up and running on <a href="http://localhost:4001">http://localhost:4001</a> and then open a second terminal tab or window and run the following command in the <code>gateway</code> directory:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span>npm run dev
+</pre></div>
+
+<p>Congratulations! You just created your first federated GraphQL API. If we revisit <a href="http://localhost:4000">http://localhost:4000</a> in a browser, then we will be able to see the gateway running with the single <code>hello</code> field available on the root <code>Query</code> type, just as it was with our previous non-federated implementation.</p>
+<h2 id="the-first-entity">The First Entity</h2>
+<p>Allowing individual teams to each manage a subsection of type definitions, expose those schemas via dedicated GraphQL APIs, and then compose them into a larger GraphQL API for client applications is pretty powerful on its own, but we have yet to take advantage of <em>entities</em>, which are one of Apollo Federation’s true superpowers.</p>
+<p>Entities provide connection points between subgraphs. More specifically, an entity is an Object or Interface type that we define in one subgraph and then reference and extend in other subgraphs. Ultimately, entities allow us to draw subgraph boundaries based on <em>separation of concerns</em> and continue to express natural type and field relationships in a subgraph schema even when certain types are owned by other subgraphs.</p>
+<p>Before we begin integrating Auth0 to support the accounts service, we’ll define an <code>Account</code> Object type as an entity and create a resolver for it. We’ll also add a new field on the root <code>Query</code> type that’s more relevant to the accounts service than the <code>hello</code> field.</p>
+<p>First, we’ll update the accounts service’s schema:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">extend</span> <span class="k">schema</span>
+  <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/federation/v2.0&quot;, import: [&quot;@key&quot;</span><span class="p">])</span>
+
+<span class="hll"><span class="kt">type</span> <span class="k">Account</span> <span class="p">{</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  email: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="kt">type</span> <span class="k">Query</span> <span class="p">{</span>
+<span class="hll">  viewer: <span class="k">Account</span>
+</span><span class="p">}</span>
+</pre></div>
+
+<p>To make the <code>Account</code> type an entity we must add an <code>@key</code> directive to its definition. The <code>@key</code> directive accepts a <code>fields</code> argument where we indicate what field or fields on the <code>Account</code> type can be used to uniquely identify a given account. You can think of it as a primary key for data that the type represents. In this case, it’s the <code>id</code> field:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="kt">type</span> <span class="k">Account</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span>  id: <span class="k">ID</span><span class="p">!</span>
+  email: <span class="k">String</span><span class="p">!</span>
+<span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>By declaring the <code>id</code> as the <code>@key</code> field for <code>Account</code>, other subgraphs will now be able to use this entity type and the gateway will know that an account can be resolved across subgraphs if the referencing subgraph knows the account’s unique ID.</p>
+<p>Now we’ll update our resolvers to return the new <code>Account</code> entity for the <code>viewer</code> field. First, we’ll add a <code>const</code> with some mocked data for testing purposes at the top of the file:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">const</span> <span class="nx">accounts</span> <span class="o">=</span> <span class="p">[</span>
+</span><span class="hll">  <span class="p">{</span>
+</span><span class="hll">    <span class="nx">id</span><span class="o">:</span> <span class="s2">&quot;1&quot;</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">email</span><span class="o">:</span> <span class="s2">&quot;marked@mandiwise.com&quot;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">];</span>
+</span><span class="hll">
+</span><span class="c1">// ...</span>
+</pre></div>
+
+<p>And then we’ll update our <code>resolvers</code> object to resolve data for the <code>Account</code> type and <code>viewer</code> field on the root <code>Query</code> type:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+<span class="hll">  <span class="nx">Account</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">__resolveReference</span><span class="p">(</span><span class="nx">reference</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">accounts</span><span class="p">.</span><span class="nx">find</span><span class="p">(</span><span class="nx">account</span> <span class="p">=&gt;</span> <span class="nx">account</span><span class="p">.</span><span class="nx">id</span> <span class="o">===</span> <span class="nx">reference</span><span class="p">.</span><span class="nx">id</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">},</span>
+</span><span class="hll">
+</span>  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="nx">viewer</span><span class="p">()</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">accounts</span><span class="p">[</span><span class="mi">0</span><span class="p">];</span>
+</span>    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Above, we have our first encounter with a <em>reference resolver</em>. A reference resolver is a special concept in Apollo Federation and it’s the way that we resolve an instance of an entity based on its primary key alone. To further clarify why we need a reference resolver, it may be helpful to imagine what will go on behind the scenes here. When a different subgraph tries to reference <code>Account</code> it must pass some data back to the gateway to identify a given account and the gateway will in turn supply that data to the accounts service inside of the <code>reference</code> object parameter of the <code>__resolveReference</code> resolver. We can access the ID of an account inside of the <code>reference</code> object and use it to fetch all of the required data for the account from there.</p>
+<p>We’ll also eventually see how we need to write resolvers in a special way for any <code>Account</code> fields that are extended by other subgraph schemas. These two kinds of resolvers are how we connect entities with other types and fields together through the gateway. But more on that to come later!</p>
+<p>It’s also worth noting that a reference resolver has the following parameters available:</p>
+<div class="highlight"><pre><span></span><span class="nx">__resolveReference</span><span class="p">(</span><span class="nx">reference</span><span class="p">,</span> <span class="nx">context</span><span class="p">,</span> <span class="nx">info</span><span class="p">)</span> <span class="p">{</span> <span class="cm">/* ... */</span> <span class="p">}</span>
+</pre></div>
+
+<p>We only need <code>reference</code> for our purposes right now, but just like regular resolvers, we can also access the <code>context</code> object (which we’ll make use of shortly) and the <code>info</code> object (which contains advanced information about the field and operation).</p>
+<p>Now we can try out our new <code>viewer</code> query against the gateway endpoint in Explorer:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Viewer</span> <span class="p">{</span>
+  <span class="k">viewer</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">email</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;viewer&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;1&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marked@mandiwise.com&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="optional-supergraph-composition-with-the-rover-cli">Optional: Supergraph Composition with the Rover CLI</h2>
+<p>Using <code>IntrospectAndCompose</code> is just one way to provide a supergraph SDL to a gateway. We can also use Apollo’s Rover CLI to compose the supergraph SDL manually as a static artifact. To try this method out, you’ll need to install the Rover binary following the instructions in the “Required Software” section of the Preface.</p>
+<p>The Rover CLI exposes a <code>rover supergraph compose</code> command that will compose a schema based on a YAML configuration file. Add a <code>supergraph.yaml</code> file to the <code>gateway/src</code> directory with the following code in it:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/supergraph.yaml</p>
+</div>
+<div class="highlight"><pre><span></span><span class="nt">subgraphs</span><span class="p">:</span>
+  <span class="nt">accounts</span><span class="p">:</span>
+    <span class="nt">routing_url</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://localhost:4001</span>
+    <span class="nt">schema</span><span class="p">:</span>
+      <span class="nt">subgraph_url</span><span class="p">:</span> <span class="l l-Scalar l-Scalar-Plain">http://localhost:4001</span>
+</pre></div>
+
+<p>In the code above, the <code>routing_url</code> option tells the gateway API where to send requests that will be fulfilled by the accounts service when resolving an operation and the <code>subgraph_url</code> option indicates where the accounts service’s schema can be introspected.</p>
+<p>With the accounts service running, we can run the following command from the <code>gateway</code> directory and see the supergraph schema output in the terminal in its SDL representation:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span>rover supergraph compose --config src/supergraph.yaml
+</pre></div>
+
+<p>We should see the following output:</p>
+<div class="highlight"><pre><span></span><span class="k">schema</span>
+  <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/link/v1.0&quot;</span><span class="p">)</span>
+  <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/join/v0.2&quot;</span>, for: <span class="k">EXECUTION</span><span class="p">)</span>
+<span class="p">{</span>
+  query: <span class="k">Query</span>
+<span class="p">}</span>
+
+<span class="kt">directive</span> <span class="p">@</span><span class="k">join__field</span><span class="p">(</span>graph: <span class="k">join__Graph</span><span class="p">!</span>, requires: <span class="k">join__FieldSet</span>, provides: <span class="k">join__FieldSet</span>, type: <span class="k">String</span>, external: <span class="k">Boolean</span>, override: <span class="k">String</span>, usedOverridden: <span class="k">Boolean</span><span class="p">)</span> <span class="k">repeatable</span> <span class="kt">on</span> <span class="k">FIELD_DEFINITION</span> <span class="p">|</span> <span class="k">INPUT_FIELD_DEFINITION</span>
+
+<span class="kt">directive</span> <span class="p">@</span><span class="k">join__graph</span><span class="p">(</span>name: <span class="k">String</span><span class="p">!</span>, url: <span class="k">String</span><span class="p">!)</span> <span class="kt">on</span> <span class="k">ENUM_VALUE</span>
+
+<span class="kt">directive</span> <span class="p">@</span><span class="k">join__implements</span><span class="p">(</span>graph: <span class="k">join__Graph</span><span class="p">!</span>, interface: <span class="k">String</span><span class="p">!)</span> <span class="k">repeatable</span> <span class="kt">on</span> <span class="k">OBJECT</span> <span class="p">|</span> <span class="k">INTERFACE</span>
+
+<span class="kt">directive</span> <span class="p">@</span><span class="k">join__type</span><span class="p">(</span>graph: <span class="k">join__Graph</span><span class="p">!</span>, key: <span class="k">join__FieldSet</span>, extension: <span class="k">Boolean</span><span class="p">!</span> <span class="p">=</span> <span class="kt">false</span>, resolvable: <span class="k">Boolean</span><span class="p">!</span> <span class="p">=</span> <span class="kt">true</span><span class="p">)</span> <span class="k">repeatable</span> <span class="kt">on</span> <span class="k">OBJECT</span> <span class="p">|</span> <span class="k">INTERFACE</span> <span class="p">|</span> <span class="k">UNION</span> <span class="p">|</span> <span class="k">ENUM</span> <span class="p">|</span> <span class="k">INPUT_OBJECT</span> <span class="p">|</span> <span class="k">SCALAR</span>
+
+<span class="kt">directive</span> <span class="kt">@link</span><span class="p">(</span>url: <span class="k">String</span>, as: <span class="k">String</span>, for: <span class="k">link__Purpose</span>, import: <span class="p">[</span><span class="k">link__Import</span><span class="p">])</span> <span class="k">repeatable</span> <span class="kt">on</span> <span class="k">SCHEMA</span>
+
+<span class="kt">type</span> <span class="k">Account</span>
+  <span class="p">@</span><span class="k">join__type</span><span class="p">(</span>graph: <span class="k">ACCOUNTS</span>, key: <span class="s2">&quot;id&quot;</span><span class="p">)</span>
+<span class="p">{</span>
+  id: <span class="k">ID</span><span class="p">!</span>
+  email: <span class="k">String</span><span class="p">!</span>
+<span class="p">}</span>
+
+<span class="k">scalar</span> <span class="k">join__FieldSet</span>
+
+<span class="k">enum</span> <span class="k">join__Graph</span> <span class="p">{</span>
+  <span class="k">ACCOUNTS</span> <span class="p">@</span><span class="k">join__graph</span><span class="p">(</span>name: <span class="s2">&quot;accounts&quot;, url: &quot;http://localhost:4001&quot;</span><span class="p">)</span>
+<span class="p">}</span>
+
+<span class="k">scalar</span> <span class="k">link__Import</span>
+
+<span class="k">enum</span> <span class="k">link__Purpose</span> <span class="p">{</span>
+  <span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">  `SECURITY` features provide metadata necessary to securely resolve fields.</span>
+<span class="c c-Multi">  &quot;&quot;&quot;</span>
+  <span class="k">SECURITY</span>
+
+  <span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">  `EXECUTION` features provide metadata necessary for operation execution.</span>
+<span class="c c-Multi">  &quot;&quot;&quot;</span>
+  <span class="k">EXECUTION</span>
+<span class="p">}</span>
+
+<span class="kt">type</span> <span class="k">Query</span>
+  <span class="p">@</span><span class="k">join__type</span><span class="p">(</span>graph: <span class="k">ACCOUNTS</span><span class="p">)</span>
+<span class="p">{</span>
+  viewer: <span class="k">Account</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Again, what we see here isn’t the schema that will be served to clients by the gateway, but rather a configuration for our gateway API that is expressed as a GraphQL schema. So in practice, there are three different kinds of schemas in use when using Apollo Federation:</p>
+<ul>
+<li><strong>Subgraph schemas:</strong> These schemas are defined by individual services (where their fields are also resolved) and composed together for use in the gateway GraphQL API.</li>
+<li><strong>Supergraph schema:</strong> This schema is used by an <code>ApolloGateway</code> to serve the client-facing schema and to route requests to subgraph services based on the fields in an operation.</li>
+<li><strong>API schema:</strong> The composed, client-facing schema where federation-related implementation details in the subgraph and supergraph schemas have been removed.</li>
+</ul>
+<p>We could write the output of the previous Rover command to a file and then read its contents and provide it directly to an <code>ApolloGateway</code> object as the <code>supergraphSdl</code> option, but we would also need to add some logic to re-fetch any subgraph schemas as they change. This is what <code>IntrospectAndCompose</code> handles in our development environment. In production, using a schema registry (such as the one in Apollo Studio) to track subgraph changes while the gateway polls the registry for updates is typically a better option than continually polling the subgraphs with <code>_service</code> queries. We’ll explore managed federation with Apollo Studio further in Chapter 9.</p>
+<h2 id="summary">Summary</h2>
+<p>In this chapter, we have laid a solid foundation for the Marked GraphQL API. Our development environment is now configured and we have a gateway Apollo Server running with Express, as well as our first subgraph schema for the accounts service, which is running on a separate Node.js process from the gateway. In the next chapter, we’ll continue to build out the accounts service by adding authentication with Auth0.</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#multi-subgraph-workflows-with-temporal">Chapter 8: Multi-Subgraph Workflows with Temporal</a>
+<ul>
+<li><a href="#the-challenge-of-cascading-user-data-deletion-across-services">The Challenge of Cascading User Data Deletion Across Services</a></li>
+<li><a href="#install-packages-and-scaffold-the-workflows-service">Install Packages and Scaffold the Workflows Service</a></li>
+<li><a href="#create-another-auth0-application-to-authenticate-the-workflows-service">Create Another Auth0 Application to Authenticate the Workflows Service</a></li>
+<li><a href="#add-a-new-authorization-directive-to-handle-token-scope">Add a New Authorization Directive to Handle Token Scope</a></li>
+<li><a href="#define-a-multi-subgraph-workflow-with-temporal">Define a Multi-Subgraph Workflow with Temporal</a></li>
+<li><a href="#add-a-deletealluserdata-mutation-field">Add a <code>deleteAllUserData</code> Mutation Field</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="multi-subgraph-workflows-with-temporal">Chapter 8: Multi-Subgraph Workflows with Temporal</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Explore patterns for coordinating related data operations across distributed services</li>
+<li>Create a subgraph schema for a workflows service and compose it into the supergraph</li>
+<li>Create a new custom type system directive to support machine-to-machine application authorization</li>
+<li>Configure multi-subgraph workflows using Temporal as an orchestrator</li>
+</ul>
+</div>
+<h2 id="the-challenge-of-cascading-user-data-deletion-across-services">The Challenge of Cascading User Data Deletion Across Services</h2>
+<p>As a requirement for the Marked application, when a user decides to delete their account then all of their data will be removed from Auth0, MongoDB, and any other backing data sources that may be added in the future. Because Marked is now powered by three different subgraph services, we are faced with the challenge of how to cascade a user’s action when deleting their account to deleting their profile and bookmark data as well.</p>
+<p>Without this cascade, we could end up with numerous orphaned profile and bookmark documents in their respective databases. Furthermore, from a transparency perspective, a user would typically expect that if they are deleting their account then they can also remove all of their personal information and content at the same time.</p>
+<p>At the moment, there are <code>deleteAccount</code>, <code>deleteProfile</code>, and <code>deleteBookmark</code> fields exposed in the API schema that would allow client developers to coordinate this business logic on their side, but this wouldn’t be a very GraphQL-like solution to this problem because we typically want to design a schema so that clients can avoid handling precisely this kind of complexity. And in general, it shouldn’t be left up to a client application to know what data needs to be cleaned up to prevent orphaned records in a database.</p>
+<p>Because we split our server-side application into three self-contained subgraph services at the outset, querying MongoDB directly in the <code>deleteAccount</code> method in the <code>AccountsDataSource</code> would be an ugly band-aid and violate separation of concerns. The accounts service would then exert control over data that belongs to the profiles and bookmarks services, and do so in a way that is opaque to those services.</p>
+<p>What we have finally run into is a common problem within distributed systems where one service needs to know about something that happened in another service, but without introducing hard dependencies between those services. There is nothing built into Apollo Federation that will automatically facilitate a series of mutations apart from the typical serial execution that would happen for top-level <code>Mutation</code> fields in any spec-compliant GraphQL server<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a>. But again, this would require clients to understand what series of mutations would need to be executed to delete all of the user data and there would be no special error-handling or retry logic automatically available in this approach if something goes wrong during the resolution of one of those fields.</p>
+<p>Before we explore potential solutions, let’s visualize the work that needs to be done when a user deletes their account data:</p>
+<p><img src="../../images/diagrams/cascading-deletion-tasks.png" alt="A user request to delete all of their data deletes data across the accounts, profiles, and bookmarks services" /><br />
+</p>
+<p>The diagram above may appear simple, but the matter of how to best coordinate interrelated operations on data across distributed systems is not a straightforward one. For Marked specifically, we need to think about what happens if one services fails to execute an operation as expected during the user data deletion process. We won’t need to worry about full-blown distributed transactions—where a failure in one subgraph service should trigger a rollback of related operations that were successfully completed in other subgraphs through a <em>compensating transaction</em>. However, we should have some retry logic available so that if a subgraph fails to delete some of the user’s data for any reason, then the operation can be run again later.</p>
+<p>In microservice architectures, <em>sagas</em> are a common pattern for coordinating a series of related, local transactions across distributed services<a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a>. In the first edition of this book, Redis was used as a pub/sub system where subgraph services could subscribe to different queues and run operations based on the messages that they received (for example, deleting a profile in response to an event that indicated that a particular user account had been deleted). This approach was closest to saga <em>choreography</em>, where individual services take self-directed actions based on events that are emitted from other services.</p>
+<p>In this revised edition, we’ll take a different approach and use something closer to saga <em>orchestration</em> where a central service will direct the subgraph services to run certain operations in response to some user action. Specifically, we’ll use <a href="https://temporal.io/">Temporal</a> as an orchestrator for the Marked application, and perhaps most interestingly, we will implement Temporal within the context of a new subgraph that will exist solely to coordinate multi-subgraph workflows such as cascading deletion.</p>
+<p>Before we start writing any code for this new subgraph, let’s paint a high-level picture of how all of the pieces will fit together by the end of this chapter:</p>
+<p><img src="../../images/diagrams/cascading-deletion-requests.png" alt="A request from a client to the gateway triggers a Temporal workflow through the workflows subgraph to cascade deletion mutations across other subgraph services" /><br />
+</p>
+<p>As we can see, we will add a <code>deleteAllUserData</code> mutation to the API schema via the workflows subgraph and initiate a Temporal workflow from within that field’s resolver. The Temporal workflow will contain a series of ordered activities and use a GraphQL client to make calls back to the gateway that will trigger mutations in the three other subgraphs that remove all applicable user data. Once these operations have completed, the workflows subgraph will return a response from the resolver for the <code>deleteAllUserData</code> mutation to the gateway and the gateway will then return its response to the front-end client that initiated the request.</p>
+<p>Under the hood, all of the required orchestration logic is handled by the workflows subgraph so the client won’t have to worry about any back-end implementation details when cleaning up a user’s data. And because Temporal has retry logic built into it, individual subgraphs or clients won’t have to worry about implementing retries for specific phases of this workflow either if anything fails.</p>
+<h2 id="install-packages-and-scaffold-the-workflows-service">Install Packages and Scaffold the Workflows Service</h2>
+<p>To begin, we’ll create a fourth and final subgraph subdirectory called <code>workflows</code> in the root project subdirectory and then generate its <code>package.json</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/</p>
+</div>
+<div class="highlight"><pre><span></span>npm init --yes
+</pre></div>
+
+<p>Then we’ll install the usual dependencies for the subgraph:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i @apollo/subgraph@2.0.3 apollo-datasource@3.3.1 apollo-server@3.7.0 dotenv@16.0.0 graphql@16.5.0 mongoose@6.3.0
+</pre></div>
+
+<p>And add nodemon as a development dependency:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i -D nodemon@2.0.15
+</pre></div>
+
+<p>We’ll set the <code>type</code> key to <code>module</code> and also add a <code>dev</code> script:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/package.json</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">  <span class="s2">&quot;type&quot;</span><span class="o">:</span> <span class="s2">&quot;module&quot;</span><span class="p">,</span>
+</span>  <span class="s2">&quot;scripts&quot;</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="s2">&quot;dev&quot;</span><span class="o">:</span> <span class="s2">&quot;nodemon -r dotenv/config -e env,graphql,js ./src/index.js&quot;</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We’ll need to use the <code>@owner</code> directive in the workflows service to authorize the <code>deleteAllUserData</code> field, so once again, we will link the copy of <code>graphql</code> installed in the <code>shared</code> directory to avoid errors:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/</p>
+</div>
+<div class="highlight"><pre><span></span>npm link graphql
+</pre></div>
+
+<p>Next, we’ll add a <code>.env</code> file for this service with a few initial environment variables:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/.env</p>
+</div>
+<div class="highlight"><pre><span></span>GATEWAY_ENDPOINT=http://localhost:4000/
+
+NODE_ENV=development
+PORT=4004
+</pre></div>
+
+<p>Note that we have set the <code>GATEWAY_ENDPOINT</code> variable here so it can be used by a GraphQL client that we will create in this service to make calls back to the gateway in the Temporal activities later on. Next, we’ll create some familiar files for this subgraph service. We’ll create an <code>index.js</code> file in a <code>src</code> directory, followed by a <code>graphql</code> subdirectory in <code>workflows/src</code> with <code>schema.graphql</code> and <code>resolvers.js</code> files, plus a <code>dataSources</code> subdirectory in there with a <code>WorkflowsDataSource.js</code> file. The current file structure will now look like this:</p>
+<div class="highlight"><pre><span></span>workflows
+  ├── node_modules/
+  |   └── ...
+  ├── src/
+  |   └── graphql
+  |       └── dataSources
+  |           └── WorkflowsDataSource.js
+  |       └── resolvers.js
+  |       └── schema.graphql
+  |   └── index.js
+  ├── .env
+  ├── package.json
+  ├── package-lock.json
+</pre></div>
+
+<p>Now we can build out the workflows service’s <code>index.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">dirname</span><span class="p">,</span> <span class="nx">resolve</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;path&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">fileURLToPath</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;url&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">readFileSync</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;fs&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">buildSubgraphSchema</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/subgraph&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">authDirectives</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../../shared/src/index.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">resolvers</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/resolvers.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">WorkflowsDataSource</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/dataSources/WorkflowsDataSource.js&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">__dirname</span> <span class="o">=</span> <span class="nx">dirname</span><span class="p">(</span><span class="nx">fileURLToPath</span><span class="p">(</span><span class="kr">import</span><span class="p">.</span><span class="nx">meta</span><span class="p">.</span><span class="nx">url</span><span class="p">));</span>
+<span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="p">{</span> <span class="nx">authDirectivesTypeDefs</span><span class="p">,</span> <span class="nx">authDirectivesTransformer</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">authDirectives</span><span class="p">();</span>
+<span class="kr">const</span> <span class="nx">subgraphTypeDefs</span> <span class="o">=</span> <span class="nx">readFileSync</span><span class="p">(</span>
+  <span class="nx">resolve</span><span class="p">(</span><span class="nx">__dirname</span><span class="p">,</span> <span class="s2">&quot;./graphql/schema.graphql&quot;</span><span class="p">),</span>
+  <span class="s2">&quot;utf-8&quot;</span>
+<span class="p">);</span>
+<span class="kr">const</span> <span class="nx">typeDefs</span> <span class="o">=</span> <span class="nx">gql</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">subgraphTypeDefs</span><span class="si">}</span><span class="err">\</span><span class="sb">n</span><span class="si">${</span><span class="nx">authDirectivesTypeDefs</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="kd">let</span> <span class="nx">subgraphSchema</span> <span class="o">=</span> <span class="nx">buildSubgraphSchema</span><span class="p">({</span> <span class="nx">typeDefs</span><span class="p">,</span> <span class="nx">resolvers</span> <span class="p">});</span>
+<span class="nx">subgraphSchema</span> <span class="o">=</span> <span class="nx">authDirectivesTransformer</span><span class="p">(</span><span class="nx">subgraphSchema</span><span class="p">);</span>
+
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">schema</span><span class="o">:</span> <span class="nx">subgraphSchema</span><span class="p">,</span>
+  <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+    <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">};</span>
+  <span class="p">},</span>
+  <span class="nx">dataSources</span><span class="o">:</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="p">{</span>
+      <span class="nx">workflowsAPI</span><span class="o">:</span> <span class="k">new</span> <span class="nx">WorkflowsDataSource</span><span class="p">()</span>
+    <span class="p">};</span>
+  <span class="p">}</span>
+<span class="p">});</span>
+
+<span class="nx">server</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">}).</span><span class="nx">then</span><span class="p">(({</span> <span class="nx">url</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+  <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Workflows service ready at </span><span class="si">${</span><span class="nx">url</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>Next, we’ll configure this subgraph schema to use Federation 2 semantics, but we won’t need to import any federation directives this time:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">extend</span> <span class="k">schema</span> <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/federation/v2.0&quot;</span><span class="p">)</span>
+</pre></div>
+
+<p>Then we’ll set up the <code>resolvers.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>As well as the <code>WorkflowsDataSource</code> class:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/dataSources/WorkflowsDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">DataSource</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-datasource&quot;</span><span class="p">;</span>
+
+<span class="kr">class</span> <span class="nx">WorkflowsDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="nx">constructor</span><span class="p">()</span> <span class="p">{</span>
+    <span class="kr">super</span><span class="p">();</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">WorkflowsDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can go back over to <code>gateway</code> and add a new environment variable for the workflows service’s endpoint:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/.env</p>
+</div>
+<div class="highlight"><pre><span></span># ...
+
+ACCOUNTS_ENDPOINT=http://localhost:4001
+PROFILES_ENDPOINT=http://localhost:4002
+BOOKMARKS_ENDPOINT=http://localhost:4003
+<span class="hll">WORKFLOWS_ENDPOINT=http://localhost:4004
+</span></pre></div>
+
+<p>Lastly, the gateway configuration needs to be updated to introspect the new subgraph’s schema:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+    <span class="nx">supergraphSdl</span><span class="o">:</span> <span class="k">new</span> <span class="nx">IntrospectAndCompose</span><span class="p">({</span>
+      <span class="nx">subgraphs</span><span class="o">:</span> <span class="p">[</span>
+        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;accounts&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">ACCOUNTS_ENDPOINT</span> <span class="p">},</span>
+        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;profiles&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PROFILES_ENDPOINT</span> <span class="p">},</span>
+<span class="hll">        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;bookmarks&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">BOOKMARKS_ENDPOINT</span> <span class="p">},</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;workflows&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">WORKFLOWS_ENDPOINT</span> <span class="p">}</span>
+</span>      <span class="p">],</span>
+      <span class="nx">pollIntervalInMs</span><span class="o">:</span> <span class="mi">1000</span>
+    <span class="p">}),</span>
+    <span class="c1">// ...</span>
+  <span class="p">});</span>
+
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>With the basic plumbing in place for the workflows service, we can open a new terminal tab or window and run <code>npm run dev</code> to start it up just like the other services.</p>
+<h2 id="create-another-auth0-application-to-authenticate-the-workflows-service">Create Another Auth0 Application to Authenticate the Workflows Service</h2>
+<p>As discussed earlier in this chapter, when the gateway executes a query plan and forwards the <code>deleteAllUserData</code> mutation to the workflows subgraph, that subgraph will need to coordinate a series of requests back to the gateway to run mutations that will remove all of the user’s data from Auth0 and MongoDB. As a best practice, we will not send these requests directly to the subgraphs, even though the endpoints are accessible in our development environment (recall the recommendation from Chapter 7 that subgraph endpoints should only be exposed to the gateway for security reasons).</p>
+<p>All of the subsequent mutations that must be sent to the accounts, profiles, and bookmarks services will require authorization to ensure that bad actors can’t delete other people’s data. So now we are faced with an interesting challenge—how will requests sent from the workflows service to the gateway be authorized? When an authenticated end user takes an action to initiate the <code>deleteAllUserData</code> mutation their request will be accompanied by their JWT in the <code>Authorization</code> header, which the gateway will then decode and validate and pass to the workflows services. But simply sending the previously validated JWT back to the gateway when the follow-up mutations are triggered by Temporal activities would expose a huge security risk if we were to expect the gateway to trust the validity of that token blindly at that point.</p>
+<p>Lucky for us, there’s a feature of Auth0 that we have already used that will help address this issue. We will create another machine-to-machine application for the workflows service to authenticate its requests to the gateway, and this will be done independently any token the end user may have sent with their request.</p>
+<p>Heading back over to the Auth0 dashboard now, we need to add some special permissions to the Marked GraphQL API that we previously created, then add a new machine-to-machine application for the workflows service and assign those permissions to it, and finally write a rule to filter those permissions out of any JWTs that are sent to human users of the API. First, we’ll navigate back to the Marked GraphQL API and add four permissions that will cover all of the use cases for the workflows service when removing user data. Those permissions will include:</p>
+<ul>
+<li><code>delete:accounts</code>: To authorize deleting a user’s account</li>
+<li><code>delete:bookmarks</code>: To authorize deleting all of a user’s bookmarks</li>
+<li><code>delete:profiles</code>: To authorize deleting a user’s profile</li>
+<li><code>update:profiles</code>: To authorize removing a user from any all other user’s networks</li>
+</ul>
+<p>Add these permissions to the Auth0 as illustrated:</p>
+<p><img src="../../images/screenshots/auth0-add-permissions-to-api.png" alt="Add permissions to the Marked GraphQL API in Auth0" /><br />
+</p>
+<p>Next, we need to create a new machine-to-machine application for the workflows service. Go to the Applications page and create a new application called “Workflows Services” and be sure to select the “Machine to Machine Applications” option. Choose the Marked GraphQL API from the dropdown on the next screen and then assign all of the permissions we just created to it:</p>
+<p><img src="../../images/screenshots/auth0-add-permissions-to-application.png" alt="Add permissions to an Auth0 machine-to-machine application" /><br />
+</p>
+<p>Once the application has been created, go to its Settings page and get the Client ID and Client Secret values to add to the workflows service’s <code>.env</code> file. We will also add an <code>AUTH0_AUDIENCE</code> variable here that is set to the gateway endpoint and an <code>AUTH0_DOMAIN</code> variable that matches the domain of your Auth0 tenant:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/.env</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll">AUTH0_AUDIENCE=http://localhost:4000/
+</span><span class="hll">AUTH0_CLIENT_ID_WORKFLOWS=XXXXXXXXXXXXXXXXXXXX
+</span><span class="hll">AUTH0_CLIENT_SECRET_WORKFLOWS=XXXXXXXXXXXXXXXXXXXX
+</span><span class="hll">AUTH0_DOMAIN=markedapp.us.auth0.com
+</span><span class="hll">
+</span># ...
+</pre></div>
+
+<p>Lastly, we need to address a security issue that we have quietly introduced to the JWTs that Auth0 issues against the Marked GraphQL API. If we leave this issue unchecked, Auth0 will now issue JWTs with payloads that look like this:</p>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;iss&quot;</span><span class="p">:</span> <span class="s2">&quot;https://markedapp.us.auth0.com/&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;sub&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;aud&quot;</span><span class="p">:</span> <span class="p">[</span>
+    <span class="s2">&quot;http://localhost:4000/&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://markedapp.us.auth0.com/userinfo&quot;</span>
+  <span class="p">],</span>
+  <span class="nt">&quot;iat&quot;</span><span class="p">:</span> <span class="mi">1651289203</span><span class="p">,</span>
+  <span class="nt">&quot;exp&quot;</span><span class="p">:</span> <span class="mi">1651375603</span><span class="p">,</span>
+  <span class="nt">&quot;azp&quot;</span><span class="p">:</span> <span class="s2">&quot;13sVZrbGp8ySe1sHYgOd44D9xxVGMI3F&quot;</span><span class="p">,</span>
+<span class="hll">  <span class="nt">&quot;scope&quot;</span><span class="p">:</span> <span class="s2">&quot;openid profile email address phone delete:accounts delete:bookmarks delete:profiles update:profiles&quot;</span><span class="p">,</span>
+</span>  <span class="nt">&quot;gty&quot;</span><span class="p">:</span> <span class="s2">&quot;password&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>By default, any new permissions added to an API will be included in any token’s <code>scope</code> field, as we can see above. We only want the workflows service to have access to these custom permissions so we can create a <em>rule</em> in Auth0 that provides filters them out from the user JWTs. According to Auth0, “a rule is arbitrary JavaScript code that can be used to extend Auth0’s default behavior when authenticating a user.” You can think of rules as a kind of middleware for Auth0.</p>
+<p>To create a rule, access the Rules page via the Auth Pipeline menu item:</p>
+<p><img src="../../images/screenshots/auth0-rules-page.png" alt="The Rules landing page in Auth0" /><br />
+</p>
+<p>In Auth0, rules take the form of an anonymous function with three parameters: <code>user</code>, <code>context</code>, and <code>callback</code>. The <code>user</code> parameter is an object that represents the logged-in user as it comes from the identity provider. The <code>context</code> object contains additional information about the current authorization transaction (like the user’s IP address or whether they tried to authenticate with a mobile device). The <code>callback</code> parameter is the callback function that must be called from within the rule to indicate either success or an error. This function sends the potentially modified data back to Auth0. It’s important to remember to call the callback in the rule, otherwise, the script will timeout.</p>
+<p>Click the “+ Create” button in the top-righthand corner of the page and choose the “Empty rule” option. We’ll add the following code to the Script editor to configure the new rule and then save the changes afterward:</p>
+<p></p>
+<div class="code-context">
+<p>Auth0 Script Editor</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kd">function</span> <span class="p">(</span><span class="nx">user</span><span class="p">,</span> <span class="nx">context</span><span class="p">,</span> <span class="nx">callback</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kd">var</span> <span class="nx">permissions</span> <span class="o">=</span> <span class="nx">user</span><span class="p">.</span><span class="nx">permissions</span> <span class="o">||</span> <span class="p">[];</span>
+  <span class="kd">var</span> <span class="nx">requestedScopes</span> <span class="o">=</span> <span class="nx">context</span><span class="p">.</span><span class="nx">request</span><span class="p">.</span><span class="nx">body</span><span class="p">.</span><span class="nx">scope</span> <span class="o">||</span> <span class="nx">context</span><span class="p">.</span><span class="nx">request</span><span class="p">.</span><span class="nx">query</span><span class="p">.</span><span class="nx">scope</span><span class="p">;</span>
+  <span class="kd">var</span> <span class="nx">filteredScopes</span> <span class="o">=</span> <span class="nx">requestedScopes</span><span class="p">.</span><span class="nx">split</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="p">).</span><span class="nx">filter</span><span class="p">(</span> <span class="kd">function</span><span class="p">(</span><span class="nx">x</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="nx">x</span><span class="p">.</span><span class="nx">indexOf</span><span class="p">(</span><span class="s1">&#39;:&#39;</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">;</span>
+  <span class="p">});</span>
+
+  <span class="kd">var</span> <span class="nx">allScopes</span> <span class="o">=</span> <span class="nx">filteredScopes</span><span class="p">.</span><span class="nx">concat</span><span class="p">(</span><span class="nx">permissions</span><span class="p">);</span>
+  <span class="nx">context</span><span class="p">.</span><span class="nx">accessToken</span><span class="p">.</span><span class="nx">scope</span> <span class="o">=</span> <span class="nx">allScopes</span><span class="p">.</span><span class="nx">join</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="p">);</span>
+
+  <span class="nx">callback</span><span class="p">(</span><span class="kc">null</span><span class="p">,</span> <span class="nx">user</span><span class="p">,</span> <span class="nx">context</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>In the Auth0 user interface, the rule code will look like this:</p>
+<p><img src="../../images/screenshots/auth0-create-a-rule.png" alt="The Rules landing page in Auth0" /><br />
+</p>
+<div class="boxout">
+<p>Keep in mind that rules are very powerful! You are ultimately responsible for the code you add to this interface and you want to make sure that you don’t compromise the security or performance of Auth0 in any way. Review the <a href="https://auth0.com/docs/best-practices/rules">rules best practices in the Auth0 documentation</a> before doing further experimentation.</p>
+<p>Also, note that there is no version control in the Auth0 script editor, so there’s no reverting if you make a change that you’re not happy about. There are, however, GitHub and GitLab extensions that will allow you to host your rule code elsewhere.</p>
+</div>
+<p>Now that the custom permissions will no longer be available in the user JWTs, our final task for this section will be configuring a small Auth0 client that can be used from within the workflows service to retrieve a token to send with its requests to the gateway from the Temporal activities that we define later. This client will be defined as an <code>Auth0Client</code> class and it will have a single <code>getToken</code> method that checks for a non-expired access token in a cache or fetches a new one if required. To facilitate token-fetching and checking an access token’s expiration time, we need to install the following two packages in <code>workflows</code>:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i jwt-decode@3.1.2 node-fetch@3.2.4
+</pre></div>
+
+<p>Now we’ll create a <code>utils</code> subdirectory in <code>workflows/src</code> and add an <code>Auth0Client.js</code> file to it with the following code:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/utils/Auth0Client.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">fetch</span> <span class="nx">from</span> <span class="s2">&quot;node-fetch&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">jwtDecode</span> <span class="nx">from</span> <span class="s2">&quot;jwt-decode&quot;</span><span class="p">;</span>
+
+<span class="kr">class</span> <span class="nx">Auth0Client</span> <span class="p">{</span>
+  <span class="nx">constructor</span><span class="p">({</span> <span class="nx">audience</span><span class="p">,</span> <span class="nx">clientId</span><span class="p">,</span> <span class="nx">clientSecret</span><span class="p">,</span> <span class="nx">domain</span> <span class="p">})</span> <span class="p">{</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">audience</span> <span class="o">=</span> <span class="nx">audience</span><span class="p">;</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">clientId</span> <span class="o">=</span> <span class="nx">clientId</span><span class="p">;</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">clientSecret</span> <span class="o">=</span> <span class="nx">clientSecret</span><span class="p">;</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">domain</span> <span class="o">=</span> <span class="nx">domain</span><span class="p">;</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">cache</span> <span class="o">=</span> <span class="p">{};</span>
+  <span class="p">}</span><span class="nx">f</span>
+  
+  <span class="nx">getToken</span> <span class="o">=</span> <span class="nx">async</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="c1">// Token-fetching code will go here...</span>
+  <span class="p">};</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">Auth0Client</span><span class="p">;</span>
+</pre></div>
+
+<p>The token cache will be a basic, in-memory key-value store that caches an access token for the workflows service based on the Auth0 Client ID of the machine-to-machine application we created. To verify that a cached token hasn’t expired, we have to decode the token and check its <code>expiresAt</code> time. If it’s still valid, we return that from the <code>getToken</code> method:</p>
+<p>workflows/src/utils/Auth0Client.js</p>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">Auth0Client</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+  
+  <span class="nx">getToken</span> <span class="o">=</span> <span class="nx">async</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+<span class="hll">    <span class="kr">const</span> <span class="nx">clientId</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">clientId</span><span class="p">;</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">cachedToken</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">cache</span><span class="p">[</span><span class="nx">clientId</span><span class="p">];</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">cachedToken</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">decodedToken</span> <span class="o">=</span> <span class="nx">jwtDecode</span><span class="p">(</span><span class="nx">cachedToken</span><span class="p">);</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">expiresAt</span> <span class="o">=</span> <span class="nx">decodedToken</span><span class="p">.</span><span class="nx">exp</span> <span class="o">*</span> <span class="mi">1000</span><span class="p">;</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">isAuthenticated</span> <span class="o">=</span> <span class="nx">expiresAt</span>
+</span><span class="hll">        <span class="o">?</span> <span class="k">new</span> <span class="nb">Date</span><span class="p">().</span><span class="nx">getTime</span><span class="p">()</span> <span class="o">&lt;</span> <span class="nx">expiresAt</span>
+</span><span class="hll">        <span class="o">:</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">if</span> <span class="p">(</span><span class="nx">isAuthenticated</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">return</span> <span class="nx">cachedToken</span><span class="p">;</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="c1">// If the token is expired or doesn&#39;t exist get a fresh token...</span>
+</span>  <span class="p">};</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">Auth0Client</span><span class="p">;</span>
+</pre></div>
+
+<p>If there isn’t a fresh token available in the cache, then we’ll fetch a new one from Auth0 using a similar approach to the one in <code>accounts/src/utils/getToken.js</code>. This time, however, we’ll send the workflows service’s application credentials in the <code>body</code> instead of a username and password in <code>form</code> data:</p>
+<p>workflows/src/utils/Auth0Client.js</p>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">Auth0Client</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+  
+  <span class="nx">getToken</span> <span class="o">=</span> <span class="nx">async</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+
+<span class="hll">    <span class="kr">const</span> <span class="nx">options</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">method</span><span class="o">:</span> <span class="s2">&quot;POST&quot;</span><span class="p">,</span>
+</span><span class="hll">      <span class="nx">headers</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">        <span class="s2">&quot;cache-control&quot;</span><span class="o">:</span> <span class="s2">&quot;no-cache&quot;</span><span class="p">,</span>
+</span><span class="hll">        <span class="s2">&quot;content-type&quot;</span><span class="o">:</span> <span class="s2">&quot;application/json&quot;</span>
+</span><span class="hll">      <span class="p">},</span>
+</span><span class="hll">      <span class="nx">body</span><span class="o">:</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">({</span>
+</span><span class="hll">        <span class="nx">audience</span><span class="o">:</span> <span class="k">this</span><span class="p">.</span><span class="nx">audience</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">client_id</span><span class="o">:</span> <span class="k">this</span><span class="p">.</span><span class="nx">clientId</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">client_secret</span><span class="o">:</span> <span class="k">this</span><span class="p">.</span><span class="nx">clientSecret</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">grant_type</span><span class="o">:</span> <span class="s2">&quot;client_credentials&quot;</span>
+</span><span class="hll">      <span class="p">})</span>
+</span><span class="hll">    <span class="p">};</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">response</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">fetch</span><span class="p">(</span><span class="sb">`https://</span><span class="si">${</span><span class="k">this</span><span class="p">.</span><span class="nx">domain</span><span class="si">}</span><span class="sb">/oauth/token`</span><span class="p">,</span> <span class="nx">options</span><span class="p">);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">body</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">response</span><span class="p">.</span><span class="nx">json</span><span class="p">();</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="p">{</span> <span class="nx">access_token</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">body</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nx">access_token</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span>
+</span><span class="hll">        <span class="nx">body</span><span class="p">.</span><span class="nx">error_description</span> <span class="o">||</span> <span class="s2">&quot;Cannot retrieve access token.&quot;</span>
+</span><span class="hll">      <span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">this</span><span class="p">.</span><span class="nx">cache</span><span class="p">[</span><span class="nx">clientId</span><span class="p">]</span> <span class="o">=</span> <span class="nx">access_token</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="nx">access_token</span><span class="p">;</span>
+</span>  <span class="p">};</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">Auth0Client</span><span class="p">;</span>
+</pre></div>
+
+<p>Now the workflows service will be able to retrieve an access token for machine-to-machine communication. When successfully fetched, the JWTs will have your machine-to-machine application’s specific Client ID in the <code>sub</code> and <code>azp</code> values and it will also have the custom permissions set as the value for the <code>scope</code> claim:</p>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;iss&quot;</span><span class="p">:</span> <span class="s2">&quot;https://markedapp.us.auth0.com/&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;sub&quot;</span><span class="p">:</span> <span class="s2">&quot;XXXXXXXXXXXXXXXXXXXX@clients&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;aud&quot;</span><span class="p">:</span> <span class="s2">&quot;http://localhost:4000/&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;iat&quot;</span><span class="p">:</span> <span class="mi">1651330929</span><span class="p">,</span>
+  <span class="nt">&quot;exp&quot;</span><span class="p">:</span> <span class="mi">1651417329</span><span class="p">,</span>
+  <span class="nt">&quot;azp&quot;</span><span class="p">:</span> <span class="s2">&quot;XXXXXXXXXXXXXXXXXXXX&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;scope&quot;</span><span class="p">:</span> <span class="s2">&quot;delete:accounts delete:bookmarks delete:profiles update:profiles&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;gty&quot;</span><span class="p">:</span> <span class="s2">&quot;client-credentials&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We will use these scopes in the next section to create a new custom directive to authorize requests from the workflows service.</p>
+<h2 id="add-a-new-authorization-directive-to-handle-token-scope">Add a New Authorization Directive to Handle Token Scope</h2>
+<p>Neither of our existing authorization-related custom directives is designed to handle permissions that are listed in a token’s <code>scope</code> claim, so we’ll need to create a new one and modify the <code>authDirectivesTransformer</code> to handle permission validation as well. Over in the <code>shared</code> directory, update the <code>authDirectives.graphql</code> file to include a new <code>@scope</code> directive that accepts a non-nullable list of non-nullable permission strings as an argument:</p>
+<p></p>
+<div class="code-context">
+<p>shared/src/directives/authDirectives.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">An authenticated user must have these access token scopes to use the field.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kt">directive</span> <span class="kt">@scope</span><span class="p">(</span>permissions: <span class="p">[</span><span class="k">String</span><span class="p">!]!)</span> <span class="kt">on</span> <span class="k">FIELD_DEFINITION</span>
+</span></pre></div>
+
+<p>We need to verify that a JWT has the correct permissions before executing the field resolver, so we will compare the value of the <code>scope</code> field on the validated token in the <code>context</code> to the list of applicable permissions that were included as arguments to the directive. The token must have all of the permissions listed in the <code>permissions</code> argument of the <code>@scope</code> directive for authorization to succeed:</p>
+<p></p>
+<div class="code-context">
+<p>shared/src/directives/authDirectives.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">authDirectives</span><span class="p">()</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">__dirname</span> <span class="o">=</span> <span class="nx">dirname</span><span class="p">(</span><span class="nx">fileURLToPath</span><span class="p">(</span><span class="kr">import</span><span class="p">.</span><span class="nx">meta</span><span class="p">.</span><span class="nx">url</span><span class="p">));</span>
+
+  <span class="k">return</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+    <span class="nx">authDirectivesTransformer</span><span class="o">:</span> <span class="nx">schema</span> <span class="p">=&gt;</span>
+      <span class="nx">mapSchema</span><span class="p">(</span><span class="nx">schema</span><span class="p">,</span> <span class="p">{</span>
+        <span class="p">[</span><span class="nx">MapperKind</span><span class="p">.</span><span class="nx">OBJECT_FIELD</span><span class="p">]</span><span class="o">:</span> <span class="nx">fieldConfig</span> <span class="p">=&gt;</span> <span class="p">{</span>
+          <span class="c1">// ...</span>
+<span class="hll">          <span class="kr">const</span> <span class="nx">scopeDirective</span> <span class="o">=</span> <span class="nx">fieldDirectives</span><span class="p">.</span><span class="nx">find</span><span class="p">(</span>
+</span><span class="hll">            <span class="nx">dir</span> <span class="p">=&gt;</span> <span class="nx">dir</span><span class="p">.</span><span class="nx">name</span> <span class="o">===</span> <span class="s2">&quot;scope&quot;</span>
+</span><span class="hll">          <span class="p">);</span>
+</span><span class="hll">
+</span>          <span class="kr">const</span> <span class="p">{</span> <span class="nx">resolve</span> <span class="o">=</span> <span class="nx">defaultFieldResolver</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">fieldConfig</span><span class="p">;</span>
+
+<span class="hll">          <span class="k">if</span> <span class="p">(</span><span class="nx">privateDirective</span> <span class="o">||</span> <span class="nx">ownerDirective</span> <span class="o">||</span> <span class="nx">scopeDirective</span><span class="p">)</span> <span class="p">{</span>
+</span>            <span class="nx">fieldConfig</span><span class="p">.</span><span class="nx">resolve</span> <span class="o">=</span> <span class="kd">function</span> <span class="p">(</span><span class="nx">source</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="nx">context</span><span class="p">,</span> <span class="nx">info</span><span class="p">)</span> <span class="p">{</span>
+              <span class="c1">// ...</span>
+
+<span class="hll">              <span class="kd">let</span> <span class="nx">scopeAuthorized</span> <span class="o">=</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">              <span class="k">if</span> <span class="p">(</span><span class="nx">scopeDirective</span> <span class="o">&amp;&amp;</span> <span class="nx">context</span><span class="p">.</span><span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">scope</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">                <span class="kr">const</span> <span class="nx">tokenPermissions</span> <span class="o">=</span> <span class="nx">context</span><span class="p">.</span><span class="nx">user</span><span class="p">.</span><span class="nx">scope</span><span class="p">.</span><span class="nx">split</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="p">);</span>
+</span><span class="hll">                <span class="nx">scopeAuthorized</span> <span class="o">=</span> <span class="nx">scopeDirective</span><span class="p">.</span><span class="nx">args</span><span class="p">.</span><span class="nx">permissions</span><span class="p">.</span><span class="nx">every</span><span class="p">(</span><span class="nx">scope</span> <span class="p">=&gt;</span>
+</span><span class="hll">                  <span class="nx">tokenPermissions</span><span class="p">.</span><span class="nx">includes</span><span class="p">(</span><span class="nx">scope</span><span class="p">)</span>
+</span><span class="hll">                <span class="p">);</span>
+</span><span class="hll">              <span class="p">}</span>
+</span><span class="hll">
+</span>              <span class="k">if</span> <span class="p">(</span>
+                <span class="p">(</span><span class="nx">privateDirective</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="nx">privateAuthorized</span><span class="p">)</span> <span class="o">||</span>
+<span class="hll">                <span class="p">(</span><span class="nx">ownerDirective</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="nx">ownerArgAuthorized</span><span class="p">)</span> <span class="o">||</span>
+</span><span class="hll">                <span class="p">(</span><span class="nx">scopeDirective</span> <span class="o">&amp;&amp;</span> <span class="o">!</span><span class="nx">scopeAuthorized</span><span class="p">)</span>
+</span>              <span class="p">)</span> <span class="p">{</span>
+                <span class="k">throw</span> <span class="k">new</span> <span class="nx">ApolloError</span><span class="p">(</span><span class="s2">&quot;Not authorized!&quot;</span><span class="p">);</span>
+              <span class="p">}</span>
+
+              <span class="k">return</span> <span class="nx">resolve</span><span class="p">(</span><span class="nx">source</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="nx">context</span><span class="p">,</span> <span class="nx">info</span><span class="p">);</span>
+            <span class="p">};</span>
+
+            <span class="k">return</span> <span class="nx">fieldConfig</span><span class="p">;</span>
+          <span class="p">}</span>
+        <span class="p">}</span>
+      <span class="p">})</span>
+  <span class="p">};</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">authDirectives</span><span class="p">;</span>
+</pre></div>
+
+<p>Now the subgraph schemas can be updated to use the new directive, and we’ll start with the <code>deleteAccount</code> mutation in the accounts service:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+  <span class="s2">&quot;Deletes an account.&quot;</span>
+<span class="hll">  <span class="k">deleteAccount</span><span class="p">(</span>id: <span class="k">ID</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span> <span class="kt">@scope</span><span class="p">(</span>permissions: <span class="p">[</span><span class="s2">&quot;delete:accounts&quot;</span><span class="p">])</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Note that we have replaced the <code>@owner</code> directive with the <code>@scope</code> directive for the <code>deleteAccount</code> field now, rather than applying both to the field. We have done this because once we have added the <code>deleteAllUserData</code> field to the root <code>Mutation</code> type in the workflows service’s schema, it will no longer make sense to authorize end users who submit requests from front-end applications to only delete their Auth0 account data. Client developers may not know that they would need to coordinate a series of other mutations to delete and update other applicable data in the bookmarks and profiles services, nor should they have to know this. Moving forward, the <code>deleteAccount</code> field will effectively be for internal use only.</p>
+<p>Moving on to the profiles services, we will need to update the existing <code>deleteProfile</code> field with the new directive and also add a new mutation that removes the deleted user from all other user’s networks:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+  <span class="s2">&quot;Deletes a user profile.&quot;</span>
+  <span class="k">deleteProfile</span><span class="p">(</span>accountId: <span class="k">ID</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span>
+<span class="hll">    <span class="kt">@scope</span><span class="p">(</span>permissions: <span class="p">[</span><span class="s2">&quot;delete:profiles&quot;</span><span class="p">])</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Remove user from other users&#39; networks&quot;</span>
+</span><span class="hll">  <span class="k">removeUserFromNetworks</span><span class="p">(</span>accountId: <span class="k">ID</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span> 
+</span><span class="hll">    <span class="kt">@scope</span><span class="p">(</span>permissions: <span class="p">[</span><span class="s2">&quot;update:profiles&quot;</span><span class="p">])</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Similarly, we don’t want to allow requests from front-end applications to delete a user profile in isolation, and the <code>removeUserFromNetworks</code> mutation is also intended for internal use by the workflows subgraph, so we only apply the <code>@scope</code> directive to these fields. Next, we’ll add a <code>removeUserFromNetworks</code> method to the <code>ProfilesDataSource</code> class to support the new field:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSource/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">async</span> <span class="nx">removeUserFromNetworks</span><span class="p">(</span><span class="nx">accountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">try</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">updateMany</span><span class="p">(</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">network</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$in</span><span class="o">:</span> <span class="p">[</span><span class="nx">accountId</span><span class="p">]</span> <span class="p">}</span> <span class="p">},</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">$pull</span><span class="o">:</span> <span class="p">{</span> <span class="nx">network</span><span class="o">:</span> <span class="nx">accountId</span> <span class="p">}</span> <span class="p">}</span>
+</span><span class="hll">      <span class="p">).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>And add then the resolver for the new field:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">    <span class="nx">removeUserFromNetworks</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">accountId</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">removeUserFromNetworks</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span>    <span class="c1">// ...</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we’ll make the required updates to the bookmarks service. In this case, we want to leave the existing <code>deleteBookmark</code> mutation as it is with the <code>@owner</code> field applied because Marked users should continue to be allowed to delete individual bookmarks that they created. Instead, we will create a <code>deleteAllUserBookmarks</code> mutation that can mass-delete all of the bookmarks that have a particular <code>ownerAccountId</code> value associated with them:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Deletes all of a user&#39;s bookmarks.&quot;</span>
+</span><span class="hll">  <span class="k">deleteAllUserBookmarks</span><span class="p">(</span>ownerAccountId: <span class="k">ID</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span> 
+</span><span class="hll">    <span class="kt">@scope</span><span class="p">(</span>permissions: <span class="p">[</span><span class="s2">&quot;delete:bookmarks&quot;</span><span class="p">])</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Next, we’ll create a new <code>deleteAllUserBookmarks</code> method in the <code>BookmarksDataSource</code> class to delete all bookmarks with a matching <code>ownerAccountId</code> field value:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/dataSources/BookmarksDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">BookmarksDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">async</span> <span class="nx">deleteAllUserBookmarks</span><span class="p">(</span><span class="nx">ownerAccountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">try</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Bookmark</span><span class="p">.</span><span class="nx">deleteMany</span><span class="p">({</span> <span class="nx">ownerAccountId</span> <span class="p">}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">BookmarksDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Lastly, we’ll add the resolver:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+    <span class="nx">deleteAllUserBookmarks</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">accountId</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">bookmarksAPI</span><span class="p">.</span><span class="nx">deleteAllUserBookmarks</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+    <span class="p">},</span>
+    <span class="c1">// ...</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>We have now finished laying the groundwork in the accounts, bookmarks, and profiles services to support cascading deletion of user data, but we won’t be able to test the new and updated fields easily quite yet until we configure Temporal in the next section.</p>
+<h2 id="define-a-multi-subgraph-workflow-with-temporal">Define a Multi-Subgraph Workflow with Temporal</h2>
+<p>We have the prerequisite code in place to create the workflow that will delete all of a user’s data across the subgraph services when requested. Before we jump in, we’ll explore a few key Temporal concepts to contextualize the code that we’ll write in this section. If you have used Temporal before, then feel free to skip this overview.</p>
+<p>At a high level, Temporal is an orchestration tool for creating long-running workflows that abstract away many of the complications of coordinating this work across distributed services. There are Temporal SDKs for Go, PHP, Java, and TypeScript currently. The TypeScript SDK will work in our JavaScript-based project, but do note that it is still beta at the time of writing so some features aren’t yet available in this SDK that are available for other languages (such as compensations to undo partially completed work in a saga).</p>
+<p>Temporal has many advanced features, but our work will focus on four key components of its orchestration system:</p>
+<ul>
+<li><strong>Activities:</strong> Functions that allow Temporal to interact with external resources, such as making a request to the Marked GraphQL API to run a mutation operation.</li>
+<li><strong>Workflows:</strong> Asynchronous functions that can orchestrate a series of defined activities. These functions should not have side effects.</li>
+<li><strong>Worker:</strong> A process that connects to the Temporal Server, polls task queues for tasks sent from clients, and runs workflows. We’ll need to start up a worker for the workflows service.</li>
+<li><strong>Clients:</strong> Clients are embedded in application code and connect to the Temporal Server. We’ll create a Temporal client inside of the <code>WorkflowsDataSource</code> to trigger a new task whenever the <code>deleteAllUserData</code> mutation is run.</li>
+</ul>
+<div class="boxout">
+<p>Before proceeding with the remainder of this section, you may want to watch <a href="https://youtu.be/CeHSmv8oF_4">Temporal’s TypeScript SDK workshop</a> and review its <a href="https://docs.temporal.io/docs/typescript/introduction">documentation</a> to gain a broader understanding of the code that will follow.</p>
+</div>
+<p>We will build out each Temporal component for the workflows service in the order of the list above, covering the first three items in this section and then configuring a Temporal client in the <code>WorkflowsDataSource</code> in the following section. Starting with activities, we will define an activity function for each mutation that we need to run to delete a user’s data. As a reminder, those mutations are <code>deleteAccount</code>, <code>removeUserFromNetworks</code>, <code>deleteProfile</code>, and <code>deleteAllUserBookmarks</code>.</p>
+<p>We could send these GraphQL operations back to the gateway using a <code>POST</code> request with <code>fetch</code>, but we will opt for a higher level of abstraction here and instantiate an <code>ApolloClient</code> in the workflows service to handle these requests. If you haven’t used Apollo Client for front-end application development before, then not to worry! We will only use a small subset of its core features to handle these requests and you won’t need to know any React to do so. Let’s install Apollo Client now:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i @apollo/client@3.6.1
+</pre></div>
+
+<p>Now we’ll create a <code>client.js</code> file with the following initial code in it:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphq/client.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloClient</span><span class="p">,</span> <span class="nx">InMemoryCache</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/client/core/core.cjs&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">HttpLink</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/client/link/http/HttpLink.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">fetch</span> <span class="nx">from</span> <span class="s2">&quot;node-fetch&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">createAuthenticatedApolloClient</span><span class="p">(</span><span class="nx">uri</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nx">uri</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span>
+      <span class="s2">&quot;Cannot make request to GraphQL API, missing `uri` argument&quot;</span>
+    <span class="p">);</span>
+  <span class="p">}</span>
+
+  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloClient</span><span class="p">({</span>
+    <span class="nx">cache</span><span class="o">:</span> <span class="k">new</span> <span class="nx">InMemoryCache</span><span class="p">(),</span>
+    <span class="nx">link</span><span class="o">:</span> <span class="k">new</span> <span class="nx">HttpLink</span><span class="p">({</span> <span class="nx">fetch</span><span class="p">,</span> <span class="nx">uri</span> <span class="p">}),</span>
+    <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;Workflows Subgraph&quot;</span><span class="p">,</span>
+    <span class="nx">version</span><span class="o">:</span> <span class="s2">&quot;1.0&quot;</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">createAuthenticatedApolloClient</span><span class="p">;</span>
+</pre></div>
+
+<div class="boxout">
+<p>The imports from Apollo Client may look a bit strange because there is <a href="https://github.com/apollographql/apollo-feature-requests/issues/287">an outstanding issue</a> with the compatibility of its exports with ES modules.</p>
+</div>
+<p>Above, the <code>ApolloClient</code> constructor takes a few important options: some metadata about the client name and version, an <code>inMemoryCache</code> object, and an <code>HttpLink</code> object that we pass our GraphQL endpoint into so Apollo Client knows where to send requests (and how to send them, as indicated by its <code>fetch</code> property). We use an <code>HttpLink</code> object instead of providing the GraphQL API endpoint directly to Apollo Client because we can chain together multiple link objects here to customize how data is sent to and received from the GraphQL Server.</p>
+<p>More specifically, <a href="https://www.apollographql.com/docs/react/api/link/introduction/">Apollo Links</a> allow us to modify the way we send requests to a GraphQL API. The most important thing to know about Apollo Links is that they allow us to chain together the units of work we want to perform before getting the result of a GraphQL operation. These units of work can be composed together so that the first “link” in the chain operates on the original GraphQL operation object and the links that follow work on the output of the link that precedes it.</p>
+<p>The last link in the composed chain will be a <em>terminating link</em>, and for our purposes, this link will send a network request to the server to fetch a result for the GraphQL operation. This is what the <code>HttpLink</code> currently does for us:</p>
+<p><img src="../../images/diagrams/apollo-link.png" alt="Diagram of a conceptual Apollo Link chain" /><br />
+</p>
+<p>Note that a terminating link doesn’t necessarily need to fetch data from a server if there is some other way to obtain the desired execution result. A standard Apollo Client set-up will use the <code>HttpLink</code> because it creates the typical terminating link for fetching data from a GraphQL endpoint over an HTTP connection.</p>
+<p>Apollo Link is key to how we’ll fetch an access token from Auth0 for the workflows service so it can be included in the <code>Authorization</code> header of the requests made back to the Marked GraphQL API. Because links are composable, we can add another link before the <code>HttpLink</code>:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/client.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloClient</span><span class="p">,</span> <span class="nx">InMemoryCache</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/client/core/core.cjs&quot;</span><span class="p">;</span>
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloLink</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/client/link/core/core.cjs&quot;</span><span class="p">;</span>
+</span><span class="kr">import</span> <span class="p">{</span> <span class="nx">HttpLink</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/client/link/http/HttpLink.js&quot;</span><span class="p">;</span>
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">setContext</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/client/link/context/context.cjs&quot;</span><span class="p">;</span>
+</span><span class="kr">import</span> <span class="nx">fetch</span> <span class="nx">from</span> <span class="s2">&quot;node-fetch&quot;</span><span class="p">;</span>
+
+<span class="hll"><span class="kd">function</span> <span class="nx">createAuthenticatedApolloClient</span><span class="p">(</span><span class="nx">uri</span><span class="p">,</span> <span class="nx">getToken</span><span class="p">)</span> <span class="p">{</span>
+</span>  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="kr">const</span> <span class="nx">authLink</span> <span class="o">=</span> <span class="nx">setContext</span><span class="p">(</span><span class="nx">async</span> <span class="p">(</span><span class="nx">request</span><span class="p">,</span> <span class="p">{</span> <span class="nx">headers</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kd">let</span> <span class="nx">accessToken</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">getToken</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">accessToken</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">getToken</span><span class="p">();</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">headers</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">        <span class="p">...</span><span class="nx">headers</span><span class="p">,</span>
+</span><span class="hll">        <span class="p">...(</span><span class="nx">accessToken</span> <span class="o">&amp;&amp;</span> <span class="p">{</span> <span class="nx">Authorization</span><span class="o">:</span> <span class="sb">`Bearer </span><span class="si">${</span><span class="nx">accessToken</span><span class="si">}</span><span class="sb">`</span> <span class="p">})</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">    <span class="p">};</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span>  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloClient</span><span class="p">({</span>
+    <span class="nx">cache</span><span class="o">:</span> <span class="k">new</span> <span class="nx">InMemoryCache</span><span class="p">(),</span>
+<span class="hll">    <span class="nx">link</span><span class="o">:</span> <span class="nx">ApolloLink</span><span class="p">.</span><span class="nx">from</span><span class="p">([</span><span class="nx">authLink</span><span class="p">,</span> <span class="k">new</span> <span class="nx">HttpLink</span><span class="p">({</span> <span class="nx">fetch</span><span class="p">,</span> <span class="nx">uri</span> <span class="p">})]),</span>
+</span>    <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;Workflows Subgraph&quot;</span><span class="p">,</span>
+    <span class="nx">version</span><span class="o">:</span> <span class="s2">&quot;1.0&quot;</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">createAuthenticatedApolloClient</span><span class="p">;</span>
+</pre></div>
+
+<p>For good measure, we’ll also add an error handling link at the start of the link chain:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/client.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">onError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/client/link/error/error.cjs&quot;</span><span class="p">;</span>
+</span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">createAuthenticatedApolloClient</span><span class="p">(</span><span class="nx">uri</span><span class="p">,</span> <span class="nx">getToken</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="kr">const</span> <span class="nx">errorLink</span> <span class="o">=</span> <span class="nx">onError</span><span class="p">(({</span> <span class="nx">graphQLErrors</span><span class="p">,</span> <span class="nx">networkError</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">graphQLErrors</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">graphQLErrors</span><span class="p">.</span><span class="nx">forEach</span><span class="p">(</span>
+</span><span class="hll">        <span class="p">({</span> <span class="nx">extensions</span><span class="o">:</span> <span class="p">{</span> <span class="nx">serviceName</span> <span class="p">},</span> <span class="nx">message</span><span class="p">,</span> <span class="nx">path</span> <span class="p">})</span> <span class="p">=&gt;</span>
+</span><span class="hll">          <span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span>
+</span><span class="hll">            <span class="sb">`[GraphQL error]: Message: </span><span class="si">${</span><span class="nx">message</span><span class="si">}</span><span class="sb">, Service: </span><span class="si">${</span><span class="nx">serviceName</span><span class="si">}</span><span class="sb">, Path: </span><span class="si">${</span><span class="nx">path</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="sb">`</span>
+</span><span class="hll">          <span class="p">)</span>
+</span><span class="hll">      <span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">networkError</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="sb">`[Network error]: </span><span class="si">${</span><span class="nx">networkError</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span>  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloClient</span><span class="p">({</span>
+    <span class="nx">cache</span><span class="o">:</span> <span class="k">new</span> <span class="nx">InMemoryCache</span><span class="p">(),</span>
+<span class="hll">    <span class="nx">link</span><span class="o">:</span> <span class="nx">ApolloLink</span><span class="p">.</span><span class="nx">from</span><span class="p">([</span>
+</span><span class="hll">      <span class="nx">errorLink</span><span class="p">,</span> 
+</span><span class="hll">      <span class="nx">authLink</span><span class="p">,</span> 
+</span><span class="hll">      <span class="k">new</span> <span class="nx">HttpLink</span><span class="p">({</span> <span class="nx">fetch</span><span class="p">,</span> <span class="nx">uri</span> <span class="p">})</span>
+</span><span class="hll">    <span class="p">]),</span>
+</span>    <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;Workflows Subgraph&quot;</span><span class="p">,</span>
+    <span class="nx">version</span><span class="o">:</span> <span class="s2">&quot;1.0&quot;</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">createAuthenticatedApolloClient</span><span class="p">;</span>
+</pre></div>
+
+<p>Next, we can write all of the operations that the Temporal activities will send when deleting user data. Create an <code>operations.js</code> file in <code>workflows/src/graphql</code> and add the following four constants to it:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/operations.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="kr">export</span> <span class="kr">const</span> <span class="nx">DeleteAccount</span> <span class="o">=</span> <span class="nx">gql</span><span class="sb">`</span>
+<span class="sb">  mutation DeleteAccount($id: ID!) {</span>
+<span class="sb">    deleteAccount(id: $id)</span>
+<span class="sb">  }</span>
+<span class="sb">`</span><span class="p">;</span>
+
+<span class="kr">export</span> <span class="kr">const</span> <span class="nx">DeleteProfile</span> <span class="o">=</span> <span class="nx">gql</span><span class="sb">`</span>
+<span class="sb">  mutation DeleteProfile($accountId: ID!) {</span>
+<span class="sb">    deleteProfile(accountId: $accountId)</span>
+<span class="sb">  }</span>
+<span class="sb">`</span><span class="p">;</span>
+
+<span class="kr">export</span> <span class="kr">const</span> <span class="nx">DeleteAllUserBookmarks</span> <span class="o">=</span> <span class="nx">gql</span><span class="sb">`</span>
+<span class="sb">  mutation DeleteAllUserBookmarks($ownerAccountId: ID!) {</span>
+<span class="sb">    deleteAllUserBookmarks(ownerAccountId: $ownerAccountId)</span>
+<span class="sb">  }</span>
+<span class="sb">`</span><span class="p">;</span>
+
+<span class="kr">export</span> <span class="kr">const</span> <span class="nx">RemoveUserFromNetworks</span> <span class="o">=</span> <span class="nx">gql</span><span class="sb">`</span>
+<span class="sb">  mutation RemoveUserFromNetworks($accountId: ID!) {</span>
+<span class="sb">    removeUserFromNetworks(accountId: $accountId)</span>
+<span class="sb">  }</span>
+<span class="sb">`</span><span class="p">;</span>
+</pre></div>
+
+<p>Note that Apollo Client expects that the operations will be wrapped in the <code>gql</code> template tag, as Apollo Server does with the schema SDL. We can now use these operations to create related activities that Temporal will use when executing the user data deletion workflow. Each activity will be a single <code>async</code> function that handles a single request to the Marked GraphQL API. If an activity fails, then the workflow will retry it so we must design them to be idempotent and as atomic as possible.</p>
+<p>To organize our Temporal-related code, we’ll create a <code>temporal</code> directory in <code>workflows/src</code>. The first file that we add here will be called <code>activities.js</code>. The activities will need access to the operations we just defined, the <code>Auth0Client</code>, and <code>createAuthenticatedApolloClient</code>:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/temporal/activities.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span>
+  <span class="nx">DeleteAccount</span><span class="p">,</span>
+  <span class="nx">DeleteProfile</span><span class="p">,</span>
+  <span class="nx">DeleteAllUserBookmarks</span><span class="p">,</span>
+  <span class="nx">RemoveUserFromNetworks</span>
+<span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../graphql/operations.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">Auth0Client</span> <span class="nx">from</span> <span class="s2">&quot;../utils/Auth0Client.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">createAuthenticatedApolloClient</span> <span class="nx">from</span> <span class="s2">&quot;../graphql/client.js&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="p">{</span> <span class="nx">getToken</span> <span class="p">}</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">Auth0Client</span><span class="p">({</span>
+  <span class="nx">audience</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_AUDIENCE</span><span class="p">,</span>
+  <span class="nx">clientId</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_CLIENT_ID_WORKFLOWS</span><span class="p">,</span>
+  <span class="nx">clientSecret</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_CLIENT_SECRET_WORKFLOWS</span><span class="p">,</span>
+  <span class="nx">domain</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">AUTH0_DOMAIN</span>
+<span class="p">});</span>
+
+<span class="kr">const</span> <span class="nx">apolloClient</span> <span class="o">=</span> <span class="nx">createAuthenticatedApolloClient</span><span class="p">(</span>
+  <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">GATEWAY_ENDPOINT</span><span class="p">,</span>
+  <span class="nx">getToken</span>
+<span class="p">);</span>
+
+<span class="c1">// Activity functions will go here...</span>
+</pre></div>
+
+<p>Next, we’ll define the activity functions. Inside each, we’ll call the <code>mutate</code> method on the <code>apolloClient</code> object and pass it the relevant mutation operation as well as the Auth0 ID of the user whose data should be deleted during the workflow:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/temporal/activities.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="kr">export</span> <span class="nx">async</span> <span class="kd">function</span> <span class="nx">deleteAccount</span><span class="p">(</span><span class="nx">id</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  <span class="kr">const</span> <span class="nx">response</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">apolloClient</span><span class="p">.</span><span class="nx">mutate</span><span class="p">({</span>
+</span><span class="hll">    <span class="nx">mutation</span><span class="o">:</span> <span class="nx">DeleteAccount</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">variables</span><span class="o">:</span> <span class="p">{</span> <span class="nx">id</span> <span class="p">}</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="k">if</span> <span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+</span><span class="hll">  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kr">export</span> <span class="nx">async</span> <span class="kd">function</span> <span class="nx">deleteProfile</span><span class="p">(</span><span class="nx">accountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  <span class="kr">const</span> <span class="nx">response</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">apolloClient</span><span class="p">.</span><span class="nx">mutate</span><span class="p">({</span>
+</span><span class="hll">    <span class="nx">mutation</span><span class="o">:</span> <span class="nx">DeleteProfile</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">variables</span><span class="o">:</span> <span class="p">{</span> <span class="nx">accountId</span> <span class="p">}</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="k">if</span> <span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+</span><span class="hll">  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kr">export</span> <span class="nx">async</span> <span class="kd">function</span> <span class="nx">removeUserFromNetworks</span><span class="p">(</span><span class="nx">accountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  <span class="kr">const</span> <span class="nx">response</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">apolloClient</span><span class="p">.</span><span class="nx">mutate</span><span class="p">({</span>
+</span><span class="hll">    <span class="nx">mutation</span><span class="o">:</span> <span class="nx">RemoveUserFromNetworks</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">variables</span><span class="o">:</span> <span class="p">{</span> <span class="nx">accountId</span> <span class="p">}</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="k">if</span> <span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+</span><span class="hll">  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kr">export</span> <span class="nx">async</span> <span class="kd">function</span> <span class="nx">deleteAllUserBookmarks</span><span class="p">(</span><span class="nx">ownerAccountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  <span class="kr">const</span> <span class="nx">response</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">apolloClient</span><span class="p">.</span><span class="nx">mutate</span><span class="p">({</span>
+</span><span class="hll">    <span class="nx">mutation</span><span class="o">:</span> <span class="nx">DeleteAllUserBookmarks</span><span class="p">,</span>
+</span><span class="hll">    <span class="nx">variables</span><span class="o">:</span> <span class="p">{</span> <span class="nx">ownerAccountId</span> <span class="p">}</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="k">if</span> <span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">throw</span> <span class="k">new</span> <span class="nb">Error</span><span class="p">(</span><span class="nx">response</span><span class="p">.</span><span class="nx">error</span><span class="p">);</span>
+</span><span class="hll">  <span class="p">}</span> <span class="k">else</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>The activities are ready to go so we can set up the workflow that will execute them when a client adds a task to the queue. To configure a workflow, we’ll need to install the Temporal TypeScript SDK in the workflows service now:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i temporalio@0.21.x
+</pre></div>
+
+<p>We’ll create a <code>workflows.js</code> file in <code>workflows/src/temporal</code> and use the <code>proxyActivities</code> function from the Temporal SDK to create functions that will schedule the deletion-related activities within a <code>DeleteAllUserData</code> workflow, which will pass its <code>accountId</code> parameter value through to the activity functions:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/temporal/workflows.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">proxyActivities</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@temporalio/workflow&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="p">{</span>
+  <span class="nx">deleteAccount</span><span class="p">,</span>
+  <span class="nx">deleteProfile</span><span class="p">,</span>
+  <span class="nx">deleteAllUserBookmarks</span><span class="p">,</span>
+  <span class="nx">removeUserFromNetworks</span>
+<span class="p">}</span> <span class="o">=</span> <span class="nx">proxyActivities</span><span class="p">({</span>
+  <span class="nx">startToCloseTimeout</span><span class="o">:</span> <span class="s2">&quot;1 minute&quot;</span>
+<span class="p">});</span>
+
+<span class="kr">export</span> <span class="nx">async</span> <span class="kd">function</span> <span class="nx">DeleteAllUserData</span><span class="p">(</span><span class="nx">accountId</span><span class="p">)</span> <span class="p">{</span>
+  <span class="nx">await</span> <span class="nx">deleteAccount</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+  <span class="nx">await</span> <span class="nx">deleteProfile</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+  <span class="nx">await</span> <span class="nx">deleteAllUserBookmarks</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+  <span class="nx">await</span> <span class="nx">removeUserFromNetworks</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Next, we’ll create a <code>worker.js</code> file in <code>workflows/src/temporal</code> where we will configure the Temporal worker process that will register all of our workflows and activities and connect to the Temporal Server:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/temporal/worker.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">Worker</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@temporalio/worker&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">URL</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;url&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="o">*</span> <span class="nx">as</span> <span class="nx">activities</span> <span class="nx">from</span> <span class="s2">&quot;./activities.js&quot;</span><span class="p">;</span>
+
+<span class="nx">async</span> <span class="kd">function</span> <span class="nx">initTemporalWorker</span><span class="p">()</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">worker</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">Worker</span><span class="p">.</span><span class="nx">create</span><span class="p">({</span>
+    <span class="nx">workflowsPath</span><span class="o">:</span> <span class="k">new</span> <span class="nx">URL</span><span class="p">(</span><span class="s2">&quot;./workflows.js&quot;</span><span class="p">,</span> <span class="kr">import</span><span class="p">.</span><span class="nx">meta</span><span class="p">.</span><span class="nx">url</span><span class="p">).</span><span class="nx">pathname</span><span class="p">,</span>
+    <span class="nx">activities</span><span class="p">,</span>
+    <span class="nx">taskQueue</span><span class="o">:</span> <span class="s2">&quot;marked-app&quot;</span>
+  <span class="p">});</span>
+
+  <span class="nx">await</span> <span class="nx">worker</span><span class="p">.</span><span class="nx">run</span><span class="p">();</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initTemporalWorker</span><span class="p">;</span>
+</pre></div>
+
+<p>The <code>await worker.run();</code> line in the <code>initTemporalWorker</code> function readies the worker to start accepting tasks on the <code>marked-app</code> queue. Lastly, we’ll import the worker function into the main <code>index.js</code> file for this service and start the worker with the subgraph’s GraphQL API:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+<span class="hll"><span class="kr">import</span> <span class="nx">initTemporalWorker</span> <span class="nx">from</span> <span class="s2">&quot;./temporal/worker.js&quot;</span><span class="p">;</span>
+</span><span class="c1">// ...</span>
+
+<span class="hll"><span class="nx">initTemporalWorker</span><span class="p">().</span><span class="k">catch</span><span class="p">(</span><span class="nx">error</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">  <span class="nx">console</span><span class="p">.</span><span class="nx">error</span><span class="p">(</span><span class="nx">error</span><span class="p">);</span>
+</span><span class="hll">  <span class="nx">process</span><span class="p">.</span><span class="nx">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">);</span>
+</span><span class="hll"><span class="p">});</span>
+</span><span class="hll">
+</span><span class="nx">server</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">}).</span><span class="nx">then</span><span class="p">(({</span> <span class="nx">url</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+  <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Workflows service ready at </span><span class="si">${</span><span class="nx">url</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="p">});</span>
+</pre></div>
+
+<h2 id="add-a-deletealluserdata-mutation-field">Add a <code>deleteAllUserData</code> Mutation Field</h2>
+<p>We’re nearly there! All of the code we have written this chapter has been directed at the goal of adding a single <code>deleteAllUserData</code> field to the root <code>Mutation</code> type in the workflows service’s schema. Let’s add that field now:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">extend</span> <span class="k">schema</span> <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/federation/v2.0&quot;</span><span class="p">)</span>
+<span class="hll">
+</span><span class="hll"><span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;Deletes all user account, profile, and bookmark data.&quot;</span>
+</span><span class="hll">  <span class="k">deleteAllUserData</span><span class="p">(</span>accountId: <span class="k">ID</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span> <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;accountId&quot;</span><span class="p">)</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>Over in the <code>WorkflowsDataSource</code>, we’ll build out the final component that’s required to trigger Temporal workflows based on a GraphQL operation. We’ll need to import the <code>Connection</code> and <code>WorkflowClient</code> constructors from the Temporal SDK first, and then we’ll use them to create a client so we can schedule new executions in the Temporal Server:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/dataSources/WorkflowsDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">Connection</span><span class="p">,</span> <span class="nx">WorkflowClient</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@temporalio/client&quot;</span><span class="p">;</span>
+</span><span class="kr">import</span> <span class="p">{</span> <span class="nx">DataSource</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-datasource&quot;</span><span class="p">;</span>
+
+<span class="kr">class</span> <span class="nx">WorkflowsDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="nx">constructor</span><span class="p">()</span> <span class="p">{</span>
+    <span class="kr">super</span><span class="p">();</span>
+<span class="hll">    <span class="kr">const</span> <span class="nx">connection</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">Connection</span><span class="p">();</span>
+</span><span class="hll">    <span class="k">this</span><span class="p">.</span><span class="nx">client</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">WorkflowClient</span><span class="p">(</span><span class="nx">connection</span><span class="p">.</span><span class="nx">service</span><span class="p">);</span>
+</span>  <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">WorkflowsDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>In the <code>deleteALlUserData</code> method, we only need to call the <code>start</code> method on the client and pass it some information about the workflow we want to run, the name of the task queue, a unique ID for the workflow, and an array containing any arguments required by the workflow (the Auth0 account ID in this case):</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/dataSources/WorkflowsDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">DeleteAllUserData</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../../temporal/workflows.js&quot;</span><span class="p">;</span>
+</span>
+<span class="kr">class</span> <span class="nx">WorkflowsDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">async</span> <span class="nx">deleteAllUserData</span><span class="p">(</span><span class="nx">accountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">try</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">handle</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">client</span><span class="p">.</span><span class="nx">start</span><span class="p">(</span><span class="nx">DeleteAllUserData</span><span class="p">,</span> <span class="p">{</span>
+</span><span class="hll">        <span class="nx">taskQueue</span><span class="o">:</span> <span class="s2">&quot;marked-app&quot;</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">workflowId</span><span class="o">:</span> <span class="sb">`delete-user-data-</span><span class="si">${</span><span class="nx">accountId</span><span class="si">}</span><span class="sb">`</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">args</span><span class="o">:</span> <span class="p">[</span><span class="nx">accountId</span><span class="p">]</span>
+</span><span class="hll">      <span class="p">});</span>
+</span><span class="hll">      <span class="nx">await</span> <span class="nx">handle</span><span class="p">.</span><span class="nx">result</span><span class="p">();</span>
+</span><span class="hll">      
+</span><span class="hll">      <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">WorkflowsDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we’ll add the resolver for the <code>deleteAllUserData</code> field:</p>
+<p></p>
+<div class="code-context">
+<p>workflows/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll"><span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">deleteAllUserData</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">accountId</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">workflowsAPI</span><span class="p">.</span><span class="nx">deleteAllUserData</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">};</span>
+</span>
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>We’re just about ready to test out the new mutation, but we still need a Temporal Server to process these workflows. You will need to have Docker Engine, the Docker CLI, and Docker Compose installed to run the server. You can refer to the Preface for more information about installing Docker software on your system.</p>
+<p>Once Docker is successfully installed and running, you can clone the Temporal Server repository to a preferred location on your computer:</p>
+<div class="highlight"><pre><span></span>git clone https://github.com/temporalio/docker-compose.git temporal-server
+</pre></div>
+
+<div class="boxout">
+<p>If you have been using Git for version control up to this point, then you may want to clone the Temporal Server repository outside of the directory that contains the <code>.git</code> directory for your project code (unless you feel comfortable working with <a href="https://git-scm.com/book/en/v2/Git-Tools-Submodules">Git submodules</a>).</p>
+</div>
+<p>From the terminal, <code>cd</code> into the new <code>temporal-server</code> directory and run the following command to start up the server:</p>
+<div class="highlight"><pre><span></span>docker compose up
+</pre></div>
+
+<p>It will take a few minutes for the server to start, but once it does, we can also start up the workflows service by opening another terminal window or tab and running <code>npm run dev</code> from the <code>workflows</code> directory. We can try running the following mutation to delete an existing user and all of their data once the gateway has been restarted and it has composed the new subgraph schema:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">DeleteAllUserData</span><span class="p">(</span><span class="nv">$accountId</span><span class="p">:</span> <span class="k">ID</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">deleteAllUserData</span><span class="p">(</span>accountId: <span class="nv">$accountId</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;accountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|626de950dc765f00706b38f4&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;deleteAllUserData&quot;</span><span class="p">:</span> <span class="kc">true</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Temporal Server comes with a web user interface built into it that we can use to verify that workflows are completed and view details about activity execution. If we visit <a href="http://localhost:8088">http://localhost:8088</a> while Temporal Server is running, we can see a list of our in-progress, completed, and failed workflows:</p>
+<p><img src="../../images/screenshots/temporal-ui-workflows.png" alt="The workflows list in the Temporal web interface showing a completed workflow" /><br />
+</p>
+<p>Clicking on any workflow run ID will provide additional details about its execution:</p>
+<p><img src="../../images/screenshots/temporal-ui-activity-details.png" alt="The workflows list in the Temporal web interface showing activity details" /><br />
+</p>
+<p>We’ve come a long way in this chapter as we have worked through the steps of adding a subgraph with a single <code>Mutation</code> field that can be invoked by a Marked user to trigger a series of mutations in other subgraphs. The <code>deleteAllUserData</code> field gives us the best of both worlds where we can design the API schema in a client-focused way and expose a single mutation that will do all of the heavy lifting to coordinate user data deletion across services, but without compromising the separation of concerns between the subgraphs.</p>
+<p>From either an architectural or a schema design perspective, there is still an outstanding detail that could be improved upon though. Namely, we’ve introduced a type of cyclic dependency into our system where the gateway sends an operation containing the <code>deleteAllUserData</code> field to the workflows service during query plan execution, and the workflows service calls back to the gateway to execute a series of mutations on other subgraphs before the original operation completes. In a more advanced implementation, one way that we could address this concern is to run a separate instance of the gateway to handle requests from the workflows service while continuing to route requests from front-end clients to the existing gateway.</p>
+<p>Beyond the architectural concerns, we may also consider some schema design improvements if we run a separate instance of the gateway to handle requests from the workflows service. Any mutation that we added the <code>@scope</code> field to this chapter is effectively off-limits to any developers building front-end client applications because they require a JWT generated for a machine-to-machine application to pass authorization. This may become a source of confusion for client developers, so at a bare minimum, documentation about these fields’ intended usage could be improved in the SDL description blocks.</p>
+<p>When using managed federation with Apollo Studio, there’s a feature called “Contracts” that allows you to selectively include or exclude fields from different variants of a schema by using a special <code>@tag</code> type system directive. This feature would allow us to apply <code>@tag</code> to our “internal use only” fields (<code>deleteAccount</code>, <code>deleteProfile</code>, <code>removeUserFromNetworks</code>, and <code>deleteAllUserBookmarks</code>) and provide a version of the supergraph without these fields for general use to front-end clients while including these fields in another version that is served by the dedicated workflows instance of the gateway. However, this feature is currently only available for enterprise Apollo Studio accounts.</p>
+<h2 id="summary">Summary</h2>
+<p>In this chapter, we implemented a workflow for handling the cascading deletion of all of a user’s data across Auth0 and MongoDB using Temporal as an orchestrator. We added the workflows service and added a single <code>deleteAllUserData</code> field to its root <code>Mutation</code> type to initiate a workflow that contained four distinct activities. These activities made calls back to the gateway to remove relevant user data. We also added an <code>@scope</code> type system directive to authorize the workflows service’s requests to the gateway with a special JWT generated for a machine-to-machine application in Auth0.</p>
+<p>Now that our subgraph services are complete, in the next chapter we’ll upgrade from unmanaged to managed federation to simulate how we would access and maintain the supergraph schema our federated graph in a production environment.</p>
+<section class="footnotes" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1" role="doc-endnote"><p><a href="https://spec.graphql.org/October2021/#sec-Normal-and-Serial-Execution">GraphQL Specification: Normal and Serial Execution</a><a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn2" role="doc-endnote"><p><a href="https://microservices.io/patterns/data/saga.html">Pattern: Saga</a><a href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

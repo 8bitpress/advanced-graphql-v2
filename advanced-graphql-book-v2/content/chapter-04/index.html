@@ -1,0 +1,1829 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#user-metadata-management-with-mongodb-and-mongoose">Chapter 4: User Metadata Management with MongoDB and Mongoose</a>
+<ul>
+<li><a href="#why-create-a-separate-service-for-user-metadata">Why Create a Separate Service for User Metadata?</a></li>
+<li><a href="#install-packages-and-configure-mongoose">Install Packages and Configure Mongoose</a></li>
+<li><a href="#scaffold-the-profiles-service">Scaffold the Profiles Service</a></li>
+<li><a href="#add-the-profile-type-and-its-query-fields">Add the <code>Profile</code> Type and Its Query Fields</a></li>
+<li><a href="#add-a-createprofile-mutation">Add a <code>createProfile</code> Mutation</a></li>
+<li><a href="#add-updateprofile-and-deleteprofile-mutations">Add <code>updateProfile</code> and <code>deleteProfile</code> Mutations</a></li>
+<li><a href="#add-and-remove-users-from-another-users-network">Add and Remove Users from Another User’s Network</a></li>
+<li><a href="#add-a-search-query-with-full-text-search-in-mongodb">Add a Search Query with Full-Text Search in MongoDB</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="user-metadata-management-with-mongodb-and-mongoose">Chapter 4: User Metadata Management with MongoDB and Mongoose</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Create a new subgraph service to contain type definitions for user profiles</li>
+<li>Set up MongoDB with Mongoose to store user metadata in a profiles collection</li>
+<li>Design the subgraph schema for a profiles service and compose it into the supergraph</li>
+<li>Create queries and mutations for reading and writing profile data to MongoDB</li>
+<li>Search users by their usernames or full names using MongoDB’s full-text search</li>
+<li>Add authorization to various fields in the profiles service</li>
+</ul>
+</div>
+<h2 id="why-create-a-separate-service-for-user-metadata">Why Create a Separate Service for User Metadata?</h2>
+<p>We need a way to store additional metadata about users that goes beyond their emails and passwords. Specifically, we need a way to store a user’s full name, a unique user handle, interests, and a list of other users in their network.</p>
+<p>Your first thought might be, “we can just use Auth0 for this.” If you’ve explored the Auth0 user management interface or documentation, then you may have noticed that there is a <code>user_metadata</code> field that could be used to store this extra user data. However, there are a few reasons we wouldn’t want to do this.</p>
+<p>First, while we could technically put whatever we want in the <code>user_metadata</code> field (as well as the complementary <code>app_metadata</code> field that can be used to store read-only data about the user), Auth0 intended these fields to be used for storing information related to the users’ identities. While a user’s full name and handle seem relevant to their identity, additional details such as the bookmark topics that they are interested in and the IDs of other users in their network seem beyond this scope.</p>
+<p>Additionally, both the <code>app_metadata</code> and <code>user_metadata</code> fields are limited to a size of 16 MB each right now, and the Auth0 documentation warns that it may put stricter limitations on the size of these fields in the future. So treating these fields like a mini database could be risky.</p>
+<p>Finally, we need to think about the rate limits of the Auth0 Management API. If we are constantly making requests to the API to query user metadata (rather than only using it for basic CRUD operations on essential user account data), then we may find ourselves bumping into rate limits sooner than we expect.</p>
+<p>In summary, while the metadata fields that Auth0 exposes are very handy, you don’t want to overuse them. If you need to store a lot of additional metadata about users that may only be tangentially related to their identity, then it’s a better idea to use a separate database because the <code>*_metadata</code> fields in Auth0 aren’t designed for this purpose.</p>
+<p>This is where MongoDB comes in. We could go a step further and store all of our user account information in MongoDB (including emails and passwords) and sync this up with our Auth0 account, but this feature is only available on paid plans. For our purposes, we can stick with our current set-up and simply use a MongoDB collection to store the additional metadata about our users. We’ll include a field in a user’s profile document in MongoDB that stores a reference to their Auth0 user ID to link the two related blocks of data together.</p>
+<h2 id="install-packages-and-configure-mongoose">Install Packages and Configure Mongoose</h2>
+<p>To begin, we need to create a <code>profiles</code> subdirectory in the root project directory to contain all of the code related to user profile metadata management. The profiles service will need its own <code>package.json</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/</p>
+</div>
+<div class="highlight"><pre><span></span>npm init --yes
+</pre></div>
+
+<p>Next, we have to install some essential packages to stand up the subgraph’s GraphQL server:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i @apollo/subgraph@2.0.3 apollo-datasource@3.3.1 apollo-server@3.7.0 dotenv@16.0.0 graphql@16.5.0
+</pre></div>
+
+<p>As well as nodemon to watch for file changes in the development environment:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i -D nodemon@2.0.15
+</pre></div>
+
+<p>And again, we will update the <code>package.json</code> file to declare ES module usage in this service and add a script to start the service:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/package.json</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">  <span class="s2">&quot;type&quot;</span><span class="o">:</span> <span class="s2">&quot;module&quot;</span><span class="p">,</span>
+</span>  <span class="s2">&quot;scripts&quot;</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="s2">&quot;dev&quot;</span><span class="o">:</span> <span class="s2">&quot;nodemon -r dotenv/config -e env,graphql,js ./src/index.js&quot;</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>The type definitions in the profiles services will make use of the <code>DateTime</code> Scalar type and the authorization directives that we defined in the last chapter, so we’ll run <code>npm link</code> again in the <code>profiles</code> directory to ensure that we reference the <code>graphql</code> package that was installed in <code>shared</code> here as well:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/</p>
+</div>
+<div class="highlight"><pre><span></span>npm link graphql
+</pre></div>
+
+<p>Finally, we’ll add a <code>.env</code> file to <code>profiles</code> and set the <code>NODE_ENV</code> and also specify the port where this service’s GraphQL endpoint will be exposed:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/.env</p>
+</div>
+<div class="highlight"><pre><span></span>NODE_ENV=development
+PORT=4002
+</pre></div>
+
+<p>Now can shift our attention to configuring this service’s connection to MongoDB. While we could work directly with the MongoDB driver for Node.js, we’re going to use <a href="https://mongoosejs.com/">Mongoose</a> as an Object Document Mapper (ODM) instead because it provides many convenience methods for working with documents and collections. Beyond that, it also allows us to specify a schema for a collection with types for document fields. Having a typed schema will offer a measure of certainty about what’s going into and coming out of our NoSQL database.</p>
+<div class="boxout">
+<p>Before proceeding, please ensure you have installed MongoDB locally. Refer to the “Required Software” section in the Preface for information about installing MongoDB.</p>
+<p>You will also need to start MongoDB before you can read and write data to a new database. For example, if you installed MongoDB on a Mac using Homebrew you can run <code>brew services start mongodb-community</code> to start up MongoDB as a macOS service.</p>
+<p>You can find more information on how to run MongoDB in its installation documentation.</p>
+</div>
+<p>Next, we’ll install the Mongoose package in <code>server</code>:</p>
+<div class="highlight"><pre><span></span>npm i mongoose@6.3.0
+</pre></div>
+
+<p>We’ll need to set an environment variable for the URL of the database next. By default, MongoDB will be available on port <code>27017</code> (be sure to change this port number if you are running MongoDB on a different port). The <code>/marked-profiles</code> portion of the MongoDB URL is the name of the database that will be lazily created by MongoDB when we write the first document to it:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/.env</p>
+</div>
+<div class="highlight"><pre><span></span><span class="hll">MONGODB_URL=mongodb://127.0.0.1:27017/marked-profiles
+</span><span class="hll">
+</span># ...
+</pre></div>
+
+<p>Now we’ll create a <code>src</code> directory in <code>profiles</code> and add a <code>config</code> subdirectory to <code>src</code>. Inside of <code>config</code> we will then add a <code>mongoose.js</code> file with the following code:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/config/mongoose.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">mongoose</span> <span class="nx">from</span> <span class="s2">&quot;mongoose&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initMongoose</span><span class="p">()</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">connectionUrl</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">MONGODB_URL</span><span class="p">;</span>
+  <span class="nx">mongoose</span><span class="p">.</span><span class="nx">connect</span><span class="p">(</span><span class="nx">connectionUrl</span><span class="p">);</span>
+
+  <span class="nx">mongoose</span><span class="p">.</span><span class="nx">connection</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s2">&quot;connected&quot;</span><span class="p">,</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Mongoose default connection ready at </span><span class="si">${</span><span class="nx">connectionUrl</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+  <span class="p">});</span>
+
+  <span class="nx">mongoose</span><span class="p">.</span><span class="nx">connection</span><span class="p">.</span><span class="nx">on</span><span class="p">(</span><span class="s2">&quot;error&quot;</span><span class="p">,</span> <span class="nx">error</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="s2">&quot;Mongoose default connection error:&quot;</span><span class="p">,</span> <span class="nx">error</span><span class="p">);</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initMongoose</span><span class="p">;</span>
+</pre></div>
+
+<p>In this file, we import <code>mongoose</code> and set up a single exported function. We’ll use this function to initiate a connection with MongoDB in the profiles service. When creating the connection to MongoDB via Mongoose we have to supply the database URL as an argument, which we’ve referenced from the <code>MONGODB_URL</code> environment variable.</p>
+<p>The basic Mongoose configuration is in place so we’re ready to build the schema for the collection belonging to this service—the <code>Profile</code> collection. Add a subdirectory in <code>profiles/src</code> called <code>models</code> and add a <code>Profile.js</code> file to it.</p>
+<p>To create the schema we must instantiate a new Mongoose <code>Schema</code>, describe all of the allowed fields for documents in this collection, and then pass the schema object itself into <code>mongoose.model</code>. The schema for <code>Profile</code> collection documents will contain <code>accountId</code>, <code>createdAt</code>, <code>fullName</code>, <code>interests</code>, <code>network</code>, and <code>username</code> fields:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/models/Profile.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">mongoose</span> <span class="nx">from</span> <span class="s2">&quot;mongoose&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">profileSchema</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">mongoose</span><span class="p">.</span><span class="nx">Schema</span><span class="p">({</span>
+  <span class="nx">accountId</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">String</span><span class="p">,</span>
+    <span class="nx">required</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+    <span class="nx">unique</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">},</span>
+  <span class="nx">createdAt</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">Date</span><span class="p">,</span>
+    <span class="k">default</span><span class="o">:</span> <span class="nb">Date</span><span class="p">.</span><span class="nx">now</span><span class="p">,</span>
+    <span class="nx">required</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">},</span>
+  <span class="nx">fullName</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">String</span><span class="p">,</span>
+    <span class="nx">trim</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">},</span>
+  <span class="nx">interests</span><span class="o">:</span> <span class="p">[</span><span class="nb">String</span><span class="p">],</span>
+  <span class="nx">network</span><span class="o">:</span> <span class="p">[</span><span class="nb">String</span><span class="p">],</span>
+  <span class="nx">username</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">type</span><span class="o">:</span> <span class="nb">String</span><span class="p">,</span>
+    <span class="nx">required</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+    <span class="nx">trim</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+    <span class="nx">unique</span><span class="o">:</span> <span class="kc">true</span>
+  <span class="p">}</span>
+<span class="p">});</span>
+
+<span class="kr">const</span> <span class="nx">Profile</span> <span class="o">=</span> <span class="nx">mongoose</span><span class="p">.</span><span class="nx">model</span><span class="p">(</span><span class="s2">&quot;Profile&quot;</span><span class="p">,</span> <span class="nx">profileSchema</span><span class="p">);</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">Profile</span><span class="p">;</span>
+</pre></div>
+
+<p>There are a few important things to note about the <code>Profile</code> document model:</p>
+<ul>
+<li>The <code>accountId</code> field will contain a reference to the associated user account in Auth0 so that we can reference and extend the <code>Account</code> entity in the profiles service’s schema. Each Auth0 user account can only be associated with one related profile document, so we enforce uniqueness for this document field value.</li>
+<li>The <code>interests</code> field will contain a list of strings that indicate what topics the user is interested in so Marked can make relevant bookmark recommendations.</li>
+<li>The <code>network</code> field will contain a list of Auth0 user account IDs, which can be used to query the profiles of other users in a user’s network.</li>
+<li>The <code>username</code> for a profile must also be unique across all documents in the collection.</li>
+<li>The <code>fullName</code>, <code>interests</code>, and <code>network</code> fields will be optional.</li>
+</ul>
+<h2 id="scaffold-the-profiles-service">Scaffold the Profiles Service</h2>
+<p>Now that we have declared a schema for the <code>Profile</code> collection in MongoDB we can start building out the subgraph schema for the profiles service. We’ll start by creating an <code>index.js</code> file in <code>profiles/src</code> to serve as the main entry point for this service. Next, we’ll create a <code>graphql</code> subdirectory in <code>profiles/src</code> with <code>schema.graphql</code> and <code>resolvers.js</code> files, plus a <code>dataSources</code> subdirectory in there with a <code>ProfilesDataSource.js</code> file.</p>
+<p>The current file structure in <code>profiles</code> will look like this:</p>
+<div class="highlight"><pre><span></span>profiles
+  ├── node_modules/
+  |   └── ...
+  ├── src/
+  |   └── config
+  |       └── mongoose.js
+  |   └── graphql
+  |       └── dataSources
+  |           └── ProfilesDataSources.js
+  |       └── resolvers.js
+  |       └── schema.graphql
+  |   └── models
+  |       └── Profile.js  
+  |   └── index.js
+  ├── .env
+  ├── package.json
+  ├── package-lock.json
+</pre></div>
+
+<p>Our goal for this section will be to loosely wire up the new subgraph schema and compose it into the supergraph schema. Throughout the rest of this chapter, we will build out each component of our second subgraph service, including type definitions, resolvers, and a data source. First, let’s set up the GraphQL server for this service in the new <code>index.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">dirname</span><span class="p">,</span> <span class="nx">resolve</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;path&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">fileURLToPath</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;url&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">readFileSync</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;fs&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServer</span><span class="p">,</span> <span class="nx">gql</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">buildSubgraphSchema</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;@apollo/subgraph&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">authDirectives</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../../shared/src/index.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">initMongoose</span> <span class="nx">from</span> <span class="s2">&quot;./config/mongoose.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">Profile</span> <span class="nx">from</span> <span class="s2">&quot;./models/Profile.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">ProfilesDataSource</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/dataSources/ProfilesDataSource.js&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="nx">resolvers</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/resolvers.js&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">__dirname</span> <span class="o">=</span> <span class="nx">dirname</span><span class="p">(</span><span class="nx">fileURLToPath</span><span class="p">(</span><span class="kr">import</span><span class="p">.</span><span class="nx">meta</span><span class="p">.</span><span class="nx">url</span><span class="p">));</span>
+<span class="kr">const</span> <span class="nx">port</span> <span class="o">=</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PORT</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="p">{</span> <span class="nx">authDirectivesTypeDefs</span><span class="p">,</span> <span class="nx">authDirectivesTransformer</span> <span class="p">}</span> <span class="o">=</span> <span class="nx">authDirectives</span><span class="p">();</span>
+<span class="kr">const</span> <span class="nx">subgraphTypeDefs</span> <span class="o">=</span> <span class="nx">readFileSync</span><span class="p">(</span>
+  <span class="nx">resolve</span><span class="p">(</span><span class="nx">__dirname</span><span class="p">,</span> <span class="s2">&quot;./graphql/schema.graphql&quot;</span><span class="p">),</span>
+  <span class="s2">&quot;utf-8&quot;</span>
+<span class="p">);</span>
+<span class="kr">const</span> <span class="nx">typeDefs</span> <span class="o">=</span> <span class="nx">gql</span><span class="p">(</span><span class="sb">`</span><span class="si">${</span><span class="nx">subgraphTypeDefs</span><span class="si">}</span><span class="err">\</span><span class="sb">n</span><span class="si">${</span><span class="nx">authDirectivesTypeDefs</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="kd">let</span> <span class="nx">subgraphSchema</span> <span class="o">=</span> <span class="nx">buildSubgraphSchema</span><span class="p">({</span> <span class="nx">typeDefs</span><span class="p">,</span> <span class="nx">resolvers</span> <span class="p">});</span>
+<span class="nx">subgraphSchema</span> <span class="o">=</span> <span class="nx">authDirectivesTransformer</span><span class="p">(</span><span class="nx">subgraphSchema</span><span class="p">);</span>
+
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">schema</span><span class="o">:</span> <span class="nx">subgraphSchema</span><span class="p">,</span>
+  <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+    <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">};</span>
+  <span class="p">},</span>
+  <span class="nx">dataSources</span><span class="o">:</span> <span class="p">()</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="k">return</span> <span class="p">{</span>
+      <span class="nx">profilesAPI</span><span class="o">:</span> <span class="k">new</span> <span class="nx">ProfilesDataSource</span><span class="p">({</span> <span class="nx">Profile</span> <span class="p">})</span>
+    <span class="p">};</span>
+  <span class="p">}</span>
+<span class="p">});</span>
+
+<span class="nx">initMongoose</span><span class="p">();</span>
+
+<span class="nx">server</span><span class="p">.</span><span class="nx">listen</span><span class="p">({</span> <span class="nx">port</span> <span class="p">}).</span><span class="nx">then</span><span class="p">(({</span> <span class="nx">url</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+  <span class="nx">console</span><span class="p">.</span><span class="nx">log</span><span class="p">(</span><span class="sb">`Profiles service ready at </span><span class="si">${</span><span class="nx">url</span><span class="si">}</span><span class="sb">`</span><span class="p">);</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>The code in this file is nearly identical to the code we have in the <code>index.js</code> file for the accounts service, with the exception that we import the <code>Profile</code> model (to pass into the <code>ProfilesDataSource</code> constructor) and the <code>initMongoose</code> function to connect to MongoDB from this service. Just as we did with our accounts service, we need to retrieve the user’s access token to authorize API requests, so we’ll set it in the Apollo Server’s <code>context</code> based on the <code>user</code> header sent from the gateway.</p>
+<p>In the <code>schema.graphql</code> file, we will only declare our intention to use the Federation 2 specification for this subgraph for now:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">extend</span> <span class="k">schema</span>
+  <span class="kt">@link</span><span class="p">(</span>url: <span class="s2">&quot;https://specs.apollo.dev/federation/v2.0&quot;, import: [&quot;@key&quot;</span><span class="p">])</span>
+</pre></div>
+
+<p>Next, we’ll add this code to the <code>resolvers.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloError</span><span class="p">,</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>And this code to <code>ProfilesDataSource.js</code>:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">DataSource</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-datasource&quot;</span><span class="p">;</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="nx">constructor</span><span class="p">({</span> <span class="nx">Profile</span> <span class="p">})</span> <span class="p">{</span>
+    <span class="kr">super</span><span class="p">();</span>
+    <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span> <span class="o">=</span> <span class="nx">Profile</span><span class="p">;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Back over in <code>gateway</code>, we’ll add a new environment variable for the profiles service’s endpoint:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/.env</p>
+</div>
+<div class="highlight"><pre><span></span># ...
+
+ACCOUNTS_ENDPOINT=http://localhost:4001
+<span class="hll">PROFILES_ENDPOINT=http://localhost:4002
+</span></pre></div>
+
+<p>And then update the <code>ApolloGateway</code> constructor so that it fetches the subgraph schema for the profiles service as well:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+    <span class="nx">supergraphSdl</span><span class="o">:</span> <span class="k">new</span> <span class="nx">IntrospectAndCompose</span><span class="p">({</span>
+      <span class="nx">subgraphs</span><span class="o">:</span> <span class="p">[</span>
+<span class="hll">        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;accounts&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">ACCOUNTS_ENDPOINT</span> <span class="p">},</span>
+</span><span class="hll">        <span class="p">{</span> <span class="nx">name</span><span class="o">:</span> <span class="s2">&quot;profiles&quot;</span><span class="p">,</span> <span class="nx">url</span><span class="o">:</span> <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">PROFILES_ENDPOINT</span> <span class="p">}</span>
+</span>      <span class="p">],</span>
+      <span class="nx">pollIntervalInMs</span><span class="o">:</span> <span class="mi">1000</span>
+    <span class="p">}),</span>
+    <span class="c1">// ...</span>
+  <span class="p">});</span>
+
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>All of the prerequisite plumbing is in place for the profiles service now, but it doesn’t have anything to contribute to the supergraph schema just yet. To remedy that, we’ll need to add some types and resolvers to the subgraph schema.</p>
+<h2 id="add-the-profile-type-and-its-query-fields">Add the <code>Profile</code> Type and Its Query Fields</h2>
+<p>Now we can build out the schema for the profiles service. As we do, we’ll finally have a chance to take advantage of one of Apollo Federation’s killer features—namely, the ability to reference and extend entity types from other subgraphs.</p>
+<p>We’ll start by creating a new type called <code>Profile</code> in the <code>schema.graphql</code> file. Again, we’ll use the <code>@key</code> directive to turn the <code>Profile</code> into an entity so that it may be referenced and extended by other subgraphs. We will also use the shared <code>DateTime</code> Scalar type for the <code>createdAt</code> field in the <code>Profile</code> type, so we have to redefine it in this subgraph as well:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">An ISO 8601-encoded UTC date string.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="k">scalar</span> <span class="k">DateTime</span>
+</span><span class="hll">
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">A profile contains metadata about a specific user.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">Profile</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The unique ID of the user&#39;s profile.&quot;</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The date and time the profile was created.&quot;</span>
+</span><span class="hll">  createdAt: <span class="k">DateTime</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The Auth0 account tied to this profile.&quot;</span>
+</span><span class="hll">  account: <span class="k">Account</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The full name of the user.&quot;</span>
+</span><span class="hll">  fullName: <span class="k">String</span>
+</span><span class="hll">  <span class="s2">&quot;A tag-like list of topics of interest to the user.&quot;</span>
+</span><span class="hll">  interests: <span class="p">[</span><span class="k">String</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;The unique username of the user.&quot;</span>
+</span><span class="hll">  username: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>We want each user profile to be connected to its corresponding account, so we add an <code>account</code> field and set the type as <code>Account</code>. Similarly, we also want to be able to traverse the graph in the other direction and retrieve the profile data from within the context of an <code>Account</code> object. Thankfully, the Apollo Federation makes it easy to define this relationship as well.</p>
+<p>To use <code>Account</code> as the output type for the <code>account</code> field, we must now define a stub of the <code>Account</code> Object type here as well:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">An account is a unique Auth0 user.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">type</span> <span class="k">Account</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">  id: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>The stub definition will just include the <code>id</code> field from the original type definition in the accounts service—this is the only piece of account data that the profiles service is aware of (stored in the MongoDB document’s <code>accountId</code> field) and it’s also the piece of data that other subgraphs need to have if they wish to reference or extend the <code>Account</code> entity, as defined by its <code>@key</code> directive.</p>
+<p>If we were only going to reference the entity in this profiles service’s subgraph schema without contributing any fields to it, we would also set an additional argument on the <code>@key</code> directive here of <code>resolvable: false</code> to indicate that this subgraph doesn’t define a reference resolver for this type. However, as noted previously, we want to be able to connect user profiles to their relevant account data and vice versa, so we will leave out that argument and extend the <code>Account</code> type with an additional <code>profile</code> field here. Note that the <code>profile</code> field will be nullable because the Auth0 user account is always created first and there may not be a profile associated with it until some time afterward:</p>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">An account is a unique Auth0 user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="kt">type</span> <span class="k">Account</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+  id: <span class="k">ID</span><span class="p">!</span>
+<span class="hll">  <span class="s2">&quot;Metadata about the user that owns the account.&quot;</span>
+</span><span class="hll">  profile: <span class="k">Profile</span>
+</span><span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>The code that we just wrote to reference and extend the <code>Account</code> entity in this subgraph schema may seem mundane, but it’s really quite magical and it illustrates one of the key value propositions of Apollo Federation. We can design a distributed GraphQL schema and we don’t have to settle for drawing awkward boundaries between subgraphs based on types alone. Instead, each subgraph team can define types that other subgraphs may use and build upon as long as they know the <code>@key</code> field values for the underlying resources. The gateway will take care of retrieving and assembling that data so that it appears to the client that it came from a single data source. Very powerful stuff!</p>
+<p>What’s more, we will see in a moment that we won’t need to go into the accounts service’s <code>resolvers.js</code> file to write the resolver for the new <code>profile</code> field in the <code>Account</code> type (because there would be no way for the accounts service to know about profile documents without access to MongoDB). Instead, we’ll write the resolver for this new <code>Account</code> field in the profiles service itself, which will allow us to maintain clear boundaries between the services and the unique data sources that they access.</p>
+<p>The final addition to the schema in this section will be standard queries for retrieving a list of profiles or a single profile by its ID:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+<span class="hll">
+</span><span class="hll"><span class="kt">type</span> <span class="k">Query</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;Retrieves a single profile by username.&quot;</span>
+</span><span class="hll">  <span class="k">profile</span><span class="p">(</span>username: <span class="k">String</span><span class="p">!):</span> <span class="k">Profile</span><span class="p">!</span> <span class="kt">@private</span>
+</span><span class="hll">  <span class="s2">&quot;Retrieves a list of profiles.&quot;</span>
+</span><span class="hll">  profiles: <span class="p">[</span><span class="k">Profile</span><span class="p">]</span> <span class="kt">@private</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>Note that both <code>Query</code> fields may only be requested by an authenticated user, so we have applied the <code>@private</code> directive to both. Now we can begin building out our data source in <code>ProfilesDataSource.js</code>. We’ll start with a <code>getProfile</code> method:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">
+</span><span class="hll">  <span class="nx">getProfile</span><span class="p">(</span><span class="nx">filter</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">findOne</span><span class="p">(</span><span class="nx">filter</span><span class="p">).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>We’ll pass an object (also known as a <em>query document</em>) into Mongoose’s <code>findOne</code> method where its value is set to the <code>filter</code> object parameter. Generalizing the <code>filter</code> will allow us to query a profile document based on various fields such as <code>accountId</code> or <code>username</code>. Lastly, we chain the <code>exec</code> method on the end so Mongoose will return a fully-fledged <code>Promise</code>.</p>
+<p>Next, we will create a <code>getProfiles</code> method using Mongoose’s <code>find</code> method:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">
+</span><span class="hll">  <span class="nx">getProfiles</span><span class="p">()</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">find</span><span class="p">({}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Passing <code>{}</code> into the <code>find</code> method will return all the documents in the collection, rather than filtering them based on some selection criteria. Now we can add resolvers for the <code>profile</code> and <code>profiles</code> queries in <code>resolvers.js</code>, as well as the <code>DateTime</code> resolver:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloError</span><span class="p">,</span> <span class="nx">UserInputError</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server&quot;</span><span class="p">;</span>
+
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">DateTimeType</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;../../../shared/src/index.js&quot;</span><span class="p">;</span>
+</span><span class="hll">
+</span><span class="hll"><span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+</span><span class="hll">  <span class="nx">DateTime</span><span class="o">:</span> <span class="nx">DateTimeType</span><span class="p">,</span>
+</span><span class="hll">  
+</span><span class="hll">  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">async</span> <span class="nx">profile</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">username</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">profile</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getProfile</span><span class="p">({</span> <span class="nx">username</span> <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nx">profile</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;Profile not available.&quot;</span><span class="p">);</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">profile</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">profiles</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getProfiles</span><span class="p">();</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll"><span class="p">};</span>
+</span>
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>The data source’s <code>getProfile</code> method returns the value of Mongoose’s <code>findOne</code> method, and <code>findOne</code> will return <code>null</code> if no matching document is found. For this reason, we throw a <code>UserInputError</code> with an instructive error message in the <code>profile</code> resolver if no matching profile was found because the <code>profile</code> query expects a non-nullable <code>Profile</code> type to be returned.</p>
+<p>Before moving on, we have to address the issue of resolving the <code>profile</code> field for the extended <code>Account</code> type, as well as resolving the <code>id</code> and <code>account</code> fields for the <code>Profile</code> type. To resolve the <code>profile</code> field on <code>Account</code>, we need to use an Auth0 account ID to look up the correct user profile. The only piece of data that connects Auth0 user accounts and MongoDB profile documents is the Auth0 account ID in the <code>accountId</code> document field, so we have to look up the profile document based on this field value. We can reuse the <code>getProfile</code> method from the <code>ProfilesDataSource</code> again to do this:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="nx">DateTime</span><span class="o">:</span> <span class="nx">DateTimeType</span><span class="p">,</span>
+  
+<span class="hll">  <span class="nx">Account</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">profile</span><span class="p">(</span><span class="nx">account</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getProfile</span><span class="p">({</span>
+</span><span class="hll">        <span class="nx">accountId</span><span class="o">:</span> <span class="nx">account</span><span class="p">.</span><span class="nx">id</span>
+</span><span class="hll">      <span class="p">});</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">},</span>
+</span><span class="hll">  
+</span>  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Next, we need to resolve the <code>id</code>, and <code>account</code> fields on <code>Profile</code> because there aren’t any directly corresponding field names in the profile documents so we can’t rely on the default resolver here. We also need to write the reference resolver for <code>Profile</code> so that the profiles service knows how to resolve this entity when referenced by another subgraph.</p>
+<p>We said that the key for the profile entity would be the <code>_id</code> of its MongoDB document because we know that this value is unique and will not change. While the <code>username</code> field is unique, users will be allowed to update their usernames after they create an account if desired, so the <code>username</code> will not be a stable value to reference.</p>
+<p>We’ll write a dedicated method to get a profile document by its ID in the <code>ProfilesDataSource</code> class using the Mongoose’s <code>findById</code> method:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">getProfileById</span><span class="p">(</span><span class="nx">id</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">findById</span><span class="p">(</span><span class="nx">id</span><span class="p">).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">  
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Using these new data source methods we can create all of the <code>Profile</code> field resolvers now:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">Profile</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">__resolveReference</span><span class="p">(</span><span class="nx">reference</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">if</span> <span class="p">(</span><span class="nx">user</span><span class="o">?</span><span class="p">.</span><span class="nx">sub</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getProfileById</span><span class="p">(</span><span class="nx">reference</span><span class="p">.</span><span class="nx">id</span><span class="p">);</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">      <span class="k">throw</span> <span class="k">new</span> <span class="nx">ApolloError</span><span class="p">(</span><span class="s2">&quot;Not authorized!&quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">account</span><span class="p">(</span><span class="nx">profile</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="p">{</span> <span class="nx">id</span><span class="o">:</span> <span class="nx">profile</span><span class="p">.</span><span class="nx">accountId</span> <span class="p">};</span>
+</span><span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">id</span><span class="p">(</span><span class="nx">profile</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">profile</span><span class="p">.</span><span class="nx">_id</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">},</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Take note that resolving the <code>account</code> field on <code>Profile</code> is different from a typical resolver. Again, the profiles service doesn’t know much about user accounts because its main concern is the profile data stored in MongoDB. For that reason, we can’t write a field resolver for the <code>account</code> field as we normally would. The solution is to return a representation of the external <code>Account</code> entity based on its <code>id</code> key. That means we will set the <code>id</code> property in the returned object to the <code>profile.accountId</code> value because <code>id</code> is the key field we previously determined that we were going to use to connect the <code>Account</code> entity to types in other subgraphs. We should now be able to start up the profiles service from a new terminal tab without errors:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/</p>
+</div>
+<div class="highlight"><pre><span></span>npm run dev
+</pre></div>
+
+<p>While the service is running now, we still have an outstanding issue to resolve—we don’t have any profile documents in MongoDB so we can’t test out the new <code>Query</code> fields just yet.</p>
+<h2 id="add-a-createprofile-mutation">Add a <code>createProfile</code> Mutation</h2>
+<p>To test the resolvers we just wrote we need a <code>createProfile</code> mutation to add a new document to MongoDB that contains the user metadata for an associated Auth0 account. We’ll start by defining an Input Object type that will be used as an argument for the mutation:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to create a new user profile.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">CreateProfileInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The new user&#39;s unique Auth0 ID.&quot;</span>
+</span><span class="hll">  accountId: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The new user&#39;s full name.&quot;</span>
+</span><span class="hll">  fullName: <span class="k">String</span>
+</span><span class="hll">  <span class="s2">&quot;A tag-like list of topics of interest to the user.&quot;</span>
+</span><span class="hll">  interests: <span class="p">[</span><span class="k">String</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;The new user&#39;s username (must be unique).&quot;</span>
+</span><span class="hll">  username: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>To create a new user profile, we must provide the Auth0 account ID and a unique username at a minimum. The user can optionally set some interests and their full name. We won’t concern ourselves with setting anything initially in the <code>network</code> field that was defined in the Mongoose <code>Profile</code> model because new users will only be able to follow other users after the account and profile creation process is complete.</p>
+<p>Now we can add a <code>createProfile</code> field on the root <code>Mutation</code> type. Users can only create new profiles for their accounts, so we will use the <code>@owner</code> directive to confirm that the <code>accountId</code> submitted with the mutation matches the user’s <code>sub</code> claim in an authenticated user’s token:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;Creates a new profile tied to an Auth0 account.&quot;</span>
+</span><span class="hll">  <span class="k">createProfile</span><span class="p">(</span>input: <span class="k">CreateProfileInput</span><span class="p">!):</span> <span class="k">Profile</span><span class="p">!</span>
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.accountId&quot;</span><span class="p">)</span>
+</span><span class="hll"><span class="p">}</span>
+</span></pre></div>
+
+<p>Next, we’ll shift our attention back to the <code>ProfilesDataSource</code> class. Whenever we save a user’s list of interests to the database, we want to make sure that each string in the list is in a tag-like format where the letter characters are all lowercase and any spaces used for whitespace are replaced with hyphens. We will add a <code>_formatTags</code> method to support that requirement and then use it to format the <code>interests</code> field during user profile creation in a new <code>createProfile</code> method:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">_formatTags</span><span class="p">(</span><span class="nx">tags</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="nx">tags</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">tag</span> <span class="p">=&gt;</span> <span class="nx">tag</span><span class="p">.</span><span class="nx">replace</span><span class="p">(</span><span class="sr">/\s+/g</span><span class="p">,</span> <span class="s2">&quot;-&quot;</span><span class="p">).</span><span class="nx">toLowerCase</span><span class="p">());</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="nx">createProfile</span><span class="p">(</span><span class="nx">profile</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">profile</span><span class="p">.</span><span class="nx">interests</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">formattedTags</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">_formatTags</span><span class="p">(</span><span class="nx">profile</span><span class="p">.</span><span class="nx">interests</span><span class="p">);</span>
+</span><span class="hll">      <span class="nx">profile</span><span class="p">.</span><span class="nx">interests</span> <span class="o">=</span> <span class="nx">formattedTags</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">newProfile</span> <span class="o">=</span> <span class="k">new</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">(</span><span class="nx">profile</span><span class="p">);</span>
+</span><span class="hll">    <span class="k">return</span> <span class="nx">newProfile</span><span class="p">.</span><span class="nx">save</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">  
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can add a <code>createProfile</code> resolver:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">  <span class="p">},</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+</span><span class="hll">    <span class="nx">createProfile</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">createProfile</span><span class="p">(</span><span class="nx">input</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span>  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>The <code>createProfile</code> mutation is now ready for testing Explorer. You’ll need to get the account ID of an existing user in Auth0 to use in the <code>input</code> argument. Make sure that you submit a valid access token in the <code>Authorization</code> header too when running this mutation:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">CreateProfile</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">CreateProfileInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">createProfile</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">createdAt</span>
+    <span class="k">username</span>
+    <span class="k">interests</span>
+    <span class="k">fullName</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;accountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-Lot&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;interests&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;graphql&quot;</span><span class="p">],</span>
+    <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;createProfile&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;625b5bbba1dad7f5f2eaa30d&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;createdAt&quot;</span><span class="p">:</span> <span class="s2">&quot;2022-04-17T00:13:47.845Z&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;interests&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="s2">&quot;graphql&quot;</span>
+      <span class="p">],</span>
+      <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-Lot&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>If you like, you can verify that the document ended up where you expected in MongoDB by running the <code>mongo</code> command to enter the MongoDB shell and then query the document as follows:</p>
+<div class="highlight"><pre><span></span>mongo
+&gt; use marked-profiles
+&gt; db.profiles.find<span class="o">()</span>
+</pre></div>
+
+<p>You should see the following output:</p>
+<div class="highlight"><pre><span></span><span class="o">{</span> <span class="s2">&quot;_id&quot;</span> : ObjectId<span class="o">(</span><span class="s2">&quot;625b5bbba1dad7f5f2eaa30d&quot;</span><span class="o">)</span>, <span class="s2">&quot;accountId&quot;</span> : <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span>, <span class="s2">&quot;fullName&quot;</span> : <span class="s2">&quot;Sir Marks-a-Lot&quot;</span>, <span class="s2">&quot;interests&quot;</span> : <span class="o">[</span> <span class="s2">&quot;graphql&quot;</span> <span class="o">]</span>, <span class="s2">&quot;network&quot;</span> : <span class="o">[</span> <span class="o">]</span>, <span class="s2">&quot;username&quot;</span> : <span class="s2">&quot;marksalot&quot;</span>, <span class="s2">&quot;createdAt&quot;</span> : ISODate<span class="o">(</span><span class="s2">&quot;2022-04-17T00:13:47.845Z&quot;</span><span class="o">)</span>, <span class="s2">&quot;__v&quot;</span> : <span class="m">0</span> <span class="o">}</span>
+</pre></div>
+
+<div class="boxout">
+<p>You can also use an application such as <a href="https://www.mongodb.com/docs/compass/current/install/">MongoDB Compass</a> to browse the documents that have been added to the profiles collection.</p>
+</div>
+<p>With a profile in the database, we also test out the profile-related queries we previously wrote. First, we’ll test the <code>profiles</code> query:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Profiles</span> <span class="p">{</span>
+  <span class="k">profiles</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">account</span> <span class="p">{</span>
+      <span class="k">id</span>
+      <span class="k">email</span>
+    <span class="p">}</span>
+    <span class="k">fullName</span>
+    <span class="k">username</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;profiles&quot;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;625b5bbba1dad7f5f2eaa30d&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+          <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+          <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot@markedmail.com&quot;</span>
+        <span class="p">},</span>
+        <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-Lot&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+      <span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Next we’ll test the <code>profile</code> query, searching the specific user by <code>username</code>. We’ll also include the <code>account</code> field with a sub-selection of <code>Account</code> fields to confirm that data can be resolved across both subgraphs in a single query:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Profile</span><span class="p">(</span><span class="nv">$username</span><span class="p">:</span> <span class="k">String</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">profile</span><span class="p">(</span>username: <span class="nv">$username</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">account</span> <span class="p">{</span>
+      <span class="k">id</span>
+      <span class="k">email</span>
+    <span class="p">}</span>
+    <span class="k">fullName</span>
+    <span class="k">username</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;profile&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;625b5bbba1dad7f5f2eaa30d&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot@markedmail.com&quot;</span>
+      <span class="p">},</span>
+      <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-Lot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We can also test the <code>accounts</code> query again to see if we get profile information from it now:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Accounts</span> <span class="p">{</span>
+  <span class="k">accounts</span> <span class="p">{</span>
+    <span class="k">id</span>
+    <span class="k">email</span>
+    <span class="k">profile</span> <span class="p">{</span>
+      <span class="k">username</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;accounts&quot;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;email&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot@markedmail.com&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;profile&quot;</span><span class="p">:</span> <span class="p">{</span>
+          <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Again, it’s quite powerful that, from a client’s perspective, all of this data can be queried from a single GraphQL endpoint and in a way that reflects the natural relationships between the nodes in the graph. At the same time, clients never have to concern themselves that separate back-end teams may manage the <code>Account</code> and <code>Profile</code> type definitions independently.</p>
+<p>What happens under the hood in the gateway to resolve this data isn’t a black box either. An <code>ApolloGateway</code> can be configured to log out its <em>query plans</em> by setting its <code>debug</code> option to <code>true</code>, as illustrated below:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+<span class="hll">    <span class="nx">debug</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+</span>    <span class="c1">// ...</span>
+  <span class="p">});</span>
+
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>After rerunning the previous <code>accounts</code> query, we can see exactly what subgraphs are involved in query plan execution, what fields are resolved by which subgraph, and how many network hops are required for an operation:</p>
+<div class="highlight"><pre><span></span>QueryPlan {
+  Sequence {
+    Fetch(service: &quot;accounts&quot;) {
+      {
+        accounts {
+          __typename
+          id
+          email
+        }
+      }
+    },
+    Flatten(path: &quot;accounts.@&quot;) {
+      Fetch(service: &quot;profiles&quot;) {
+        {
+          ... on Account {
+            __typename
+            id
+          }
+        } =&gt;
+        {
+          ... on Account {
+            profile {
+              username
+            }
+          }
+        }
+      },
+    },
+  },
+}
+</pre></div>
+
+<p>The syntax above may seem a bit dense at first, but if we dig in we can see the gateway’s first step is to query the accounts service for the <code>id</code> and <code>email</code> data for each account. Once that data is resolved, the next step is to query the profiles service to fetch the usernames for each user based on the account IDs. As we can see, query plans can be a helpful tool for understanding how an operation is executed across subgraphs and can be very useful for debugging and performance optimization purposes.</p>
+<div class="boxout">
+<p>You can learn more about <a href="https://www.apollographql.com/docs/federation/query-plans/">query plan structure and output</a> in the Apollo Federation documentation.</p>
+</div>
+<h2 id="add-updateprofile-and-deleteprofile-mutations">Add <code>updateProfile</code> and <code>deleteProfile</code> Mutations</h2>
+<p>We can create profiles now, but we still don’t have any way to update or delete them yet. Unlike account updates where a user would only update their email address or password per mutation, profile fields will be simultaneously updated through the Marked user interface. For that reason, we will create an <code>updateProfile</code> mutation that can handle multiple fields. First, we’ll create an Input Object type to use as an argument in an <code>updateProfile</code> mutation:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides data to update an existing profile.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">UpdateProfileInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The new user&#39;s unique Auth0 ID.&quot;</span>
+</span><span class="hll">  accountId: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The updated full name of the user.&quot;</span>
+</span><span class="hll">  fullName: <span class="k">String</span>
+</span><span class="hll">  <span class="s2">&quot;An updated list of tag-like topics of interest to the user.&quot;</span>
+</span><span class="hll">  interests: <span class="p">[</span><span class="k">String</span><span class="p">]</span>
+</span><span class="hll">  <span class="s2">&quot;The updated unique username of the user.&quot;</span>
+</span><span class="hll">  username: <span class="k">String</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>Note that we could uniquely identify a profile based on its <code>accountId</code>, <code>id</code>, or <code>username</code> fields, but we’ll opt for the <code>accountId</code> here to facilitate the authorization check before the mutation operation runs. Now we’ll add the <code>updateProfile</code> mutation itself:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Updates a user&#39;s profile details.&quot;</span>
+</span><span class="hll">  <span class="k">updateProfile</span><span class="p">(</span>input: <span class="k">UpdateProfileInput</span><span class="p">!):</span> <span class="k">Profile</span><span class="p">!</span>
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.accountId&quot;</span><span class="p">)</span>
+</span><span class="p">}</span>
+</pre></div>
+
+<p>Before creating this mutation’s resolver we’ll add a method to the <code>ProfilesDataSource</code> class that will update the profile document in MongoDB:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+<span class="hll">
+</span><span class="hll">   <span class="nx">async</span> <span class="nx">updateProfile</span><span class="p">(</span><span class="nx">accountId</span><span class="p">,</span> <span class="nx">updatedProfileData</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span>
+</span><span class="hll">      <span class="o">!</span><span class="nx">updatedProfileData</span> <span class="o">||</span>
+</span><span class="hll">      <span class="p">(</span><span class="nx">updatedProfileData</span> <span class="o">&amp;&amp;</span> <span class="nb">Object</span><span class="p">.</span><span class="nx">keys</span><span class="p">(</span><span class="nx">updatedProfileData</span><span class="p">).</span><span class="nx">length</span> <span class="o">===</span> <span class="mi">0</span><span class="p">)</span>
+</span><span class="hll">    <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;You must supply some profile data to update.&quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">if</span> <span class="p">(</span><span class="nx">updatedProfileData</span><span class="p">.</span><span class="nx">interests</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="kr">const</span> <span class="nx">formattedTags</span> <span class="o">=</span> <span class="k">this</span><span class="p">.</span><span class="nx">_formatTags</span><span class="p">(</span><span class="nx">updatedProfileData</span><span class="p">.</span><span class="nx">interests</span><span class="p">);</span>
+</span><span class="hll">      <span class="nx">updatedProfileData</span><span class="p">.</span><span class="nx">interests</span> <span class="o">=</span> <span class="nx">formattedTags</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">findOneAndUpdate</span><span class="p">(</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">accountId</span> <span class="p">},</span>
+</span><span class="hll">      <span class="nx">updatedProfileData</span><span class="p">,</span>
+</span><span class="hll">      <span class="p">{</span>
+</span><span class="hll">        <span class="k">new</span><span class="o">:</span> <span class="kc">true</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">    <span class="p">).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>In this method, we require that the user’s <code>accountId</code> is always passed as the first argument so we can use it to find the correct user profile document to update in MongoDB. All other fields are optional, but we’ll throw an error if no fields were included. Also, note that we mark the method as <code>async</code> and use the <code>await</code> keyword with <code>findOneAndUpdate</code> so we don’t get an error from Mongoose about <a href="https://mongoosejs.com/docs/migrating_to_6.html#duplicate-query-execution">duplicate query execution</a> if we run the query more than once.</p>
+<p>Note that the first argument passed to <code>findOneAndUpdate</code> is an object containing the fields needed to find a matching document (in our case, only the unique <code>accountId</code> field). The second argument is an object containing the fields we wish to update. By passing <code>{ new: true }</code> as the final argument, this method will return the updated document once the new field values are successfully saved.</p>
+<p>Now we can add the <code>updateProfile</code> mutation in <code>resolvers.js</code>:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="nx">createProfile</span><span class="p">(</span><span class="nx">parent</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">createProfile</span><span class="p">(</span><span class="nx">input</span><span class="p">);</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">updateProfile</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">accountId</span><span class="p">,</span> <span class="p">...</span><span class="nx">rest</span> <span class="p">}</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">updateProfile</span><span class="p">(</span><span class="nx">accountId</span><span class="p">,</span> <span class="nx">rest</span><span class="p">);</span>
+</span>    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Let’s test out the new mutation in Explorer:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">UpdateProfile</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">UpdateProfileInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">updateProfile</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">interests</span>
+    <span class="k">username</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;accountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;interests&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;javascript&quot;</span><span class="p">,</span> <span class="s2">&quot;graphql&quot;</span><span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;updateProfile&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;interests&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="s2">&quot;javascript&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;graphql&quot;</span>
+      <span class="p">],</span>
+      <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We’ll run through the same series of steps to add the <code>deleteProfile</code> mutation now. First, we’ll add the <code>deleteProfile</code> mutation to the schema in <code>schema.graphql</code>:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Deletes a user profile.&quot;</span>
+</span><span class="hll">  <span class="k">deleteProfile</span><span class="p">(</span>accountId: <span class="k">ID</span><span class="p">!):</span> <span class="k">Boolean</span><span class="p">!</span> 
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.accountId&quot;</span><span class="p">)</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Next, we’ll add a related data source method in <code>ProfilesDataSource.js</code>:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">async</span> <span class="nx">deleteProfile</span><span class="p">(</span><span class="nx">accountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">try</span> <span class="p">{</span>
+</span><span class="hll">      <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">findOneAndDelete</span><span class="p">({</span>
+</span><span class="hll">        <span class="nx">accountId</span>
+</span><span class="hll">      <span class="p">}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">true</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span> <span class="k">catch</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="kc">false</span><span class="p">;</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Again, for deletion, we’ll make the method <code>async</code> so we can wait for the promise to resolve before returning a boolean to indicate whether the operation was successful. Lastly, we’ll add the <code>deleteProfile</code> resolver to <code>resolvers.js</code>:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">    <span class="nx">deleteProfile</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">accountId</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">deleteProfile</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span>    <span class="c1">// ...</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can test out the new mutation in Explorer:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">DeleteProfile</span><span class="p">(</span><span class="nv">$accountId</span><span class="p">:</span> <span class="k">ID</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">deleteProfile</span><span class="p">(</span>accountId: <span class="nv">$accountId</span><span class="p">)</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;accountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;deleteProfile&quot;</span><span class="p">:</span> <span class="kc">true</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="add-and-remove-users-from-another-users-network">Add and Remove Users from Another User’s Network</h2>
+<p>Using Marked will be more interesting for users if there’s a way to discover other people and their bookmarks, so the last two mutations for this schema will allow users to find and establish a connection with other users. To complete the next section, you’ll need at least two user accounts set up in Auth0 with two associated user profiles in MongoDB. Use the <code>createAccount</code> and <code>createProfile</code> mutations in Explorer to create the accounts and profiles if you haven’t done so already.</p>
+<p>First, we’ll add network-related fields to the <code>Profile</code> type called <code>network</code> and <code>isInNetwork</code>:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schma.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">A profile contains metadata about a specific user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="kt">type</span> <span class="k">Profile</span> <span class="kt">@key</span><span class="p">(</span>fields: <span class="s2">&quot;id&quot;</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Whether the currently authenticated user has another user in their network.&quot;</span>
+</span><span class="hll">  isInNetwork: <span class="k">Boolean</span>
+</span><span class="hll">  <span class="s2">&quot;Other users that have been added to the user&#39;s network.&quot;</span>
+</span><span class="hll">  network: <span class="p">[</span><span class="k">Profile</span><span class="p">]</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>The <code>network</code> field provides a list of the member profiles of a user’s network and the <code>isInNetwork</code> field will indicate whether an authenticated user is viewing another user that they have already added to their network (which can be helpful when rendering user interface elements in a client application). A more advanced version of the Marked application could also allow users to collaborate on collections of bookmarks with other users in their network.</p>
+<p>Now we’ll address the network-related mutations. Both of these mutations are very similar, so we can tackle both of them at the same time. We’ll start by updating the schema with a new Input Object:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="c c-Multi">Provides the unique ID of an existing profile to add or remove from a network.</span>
+</span><span class="hll"><span class="c c-Multi">&quot;&quot;&quot;</span>
+</span><span class="hll"><span class="kt">input</span> <span class="k">NetworkMemberInput</span> <span class="p">{</span>
+</span><span class="hll">  <span class="s2">&quot;The unique Auth0 ID of the user that is updating their network.&quot;</span>
+</span><span class="hll">  accountId: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll">  <span class="s2">&quot;The unique Auth0 ID of the user to be added or removed from a network.&quot;</span>
+</span><span class="hll">  networkMemberId: <span class="k">ID</span><span class="p">!</span>
+</span><span class="hll"><span class="p">}</span>
+</span><span class="hll">
+</span><span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>The <code>networkMemberId</code> field will do two jobs for us. In the context of adding a user to a network, it will refer to the user to be added. Alternatively, when running a mutation to remove a user from another user’s network, it will refer to the user being removed. We will keep track of network members by their Auth0 IDs because these are stable values and this approach will make it easier to clean up all references to a deleted user later on in Chapter 9.</p>
+<p>Now we’ll add <code>addToNetwork</code> and <code>removeFromNetwork</code> mutations to the schema using the <code>NetworkMemberInput</code> as an argument for both. Users will only be able to update their own networks, so we’ll add the <code>@owner</code> directive as well:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Mutation</span> <span class="p">{</span>
+<span class="hll">  <span class="s2">&quot;Allows one user to add another user to their network.&quot;</span>
+</span><span class="hll">  <span class="k">addToNetwork</span><span class="p">(</span>input: <span class="k">NetworkMemberInput</span><span class="p">!):</span> <span class="k">Profile</span><span class="p">!</span>
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.accountId&quot;</span><span class="p">)</span>
+</span>  <span class="c c-Singline"># ..</span>
+<span class="hll">  <span class="s2">&quot;Allows one user to remove another user from their network.&quot;</span>
+</span><span class="hll">  <span class="k">removeFromNetwork</span><span class="p">(</span>input: <span class="k">NetworkMemberInput</span><span class="p">!):</span> <span class="k">Profile</span><span class="p">!</span> 
+</span><span class="hll">    <span class="kt">@owner</span><span class="p">(</span>argumentName: <span class="s2">&quot;input.accountId&quot;</span><span class="p">)</span>
+</span>  <span class="c c-Singline"># ...</span>
+<span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>Next, we’ll have to update the <code>ProfilesDataSource</code> class with a few new methods to support these mutations. First, we’ll add two methods that update a profile’s <code>network</code> field with the ID of the user they wish to add or remove as a member of their network:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">async</span> <span class="nx">addToNetwork</span><span class="p">(</span><span class="nx">accountId</span><span class="p">,</span> <span class="nx">accountIdToFollow</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">     <span class="k">if</span> <span class="p">(</span><span class="nx">accountId</span> <span class="o">===</span> <span class="nx">accountIdToFollow</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">throw</span> <span class="k">new</span> <span class="nx">UserInputError</span><span class="p">(</span><span class="s2">&quot;User cannot be added to their own network.&quot;</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">findOneAndUpdate</span><span class="p">(</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">accountId</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">$addToSet</span><span class="o">:</span> <span class="p">{</span> <span class="nx">network</span><span class="o">:</span> <span class="nx">accountIdToFollow</span> <span class="p">}</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="k">new</span><span class="o">:</span> <span class="kc">true</span> <span class="p">}</span>
+</span><span class="hll">    <span class="p">).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="nx">async</span> <span class="nx">removeFromNetwork</span><span class="p">(</span><span class="nx">accountId</span><span class="p">,</span> <span class="nx">accountIdToFollow</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">findOneAndUpdate</span><span class="p">(</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">accountId</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">$pull</span><span class="o">:</span> <span class="p">{</span> <span class="nx">network</span><span class="o">:</span> <span class="nx">accountIdToFollow</span> <span class="p">}</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="k">new</span><span class="o">:</span> <span class="kc">true</span> <span class="p">}</span>
+</span><span class="hll">    <span class="p">).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Note the use of the <code>$addToSet</code> operator in the <code>addToNetwork</code> method. By using this operator instead of <code>$push</code>, we can be certain that all values added to this array field will be unique (because it wouldn’t make sense to follow the same user twice). Similarly, we use the <code>$pull</code> operator in the <code>removeFromNetwork</code> method to delete the matching ID from the <code>network</code> array field.</p>
+<p>Now we’ll add a method to fetch all of the profile documents for members of a user’s network:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">getNetworkProfiles</span><span class="p">(</span><span class="nx">network</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">find</span><span class="p">({</span> <span class="nx">accountId</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$in</span><span class="o">:</span> <span class="nx">network</span> <span class="p">}</span> <span class="p">}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Lastly, we need another method to support the <code>isInNetwork</code> field that will check if the authenticated user has another user in their network:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">   <span class="nx">async</span> <span class="nx">checkViewerHasInNetwork</span><span class="p">(</span><span class="nx">viewerAccountId</span><span class="p">,</span> <span class="nx">accountId</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">viewerProfile</span> <span class="o">=</span> <span class="nx">await</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">findOne</span><span class="p">({</span>
+</span><span class="hll">      <span class="nx">accountId</span><span class="o">:</span> <span class="nx">viewerAccountId</span>
+</span><span class="hll">    <span class="p">})</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">select</span><span class="p">(</span><span class="s2">&quot;network&quot;</span><span class="p">)</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">      
+</span><span class="hll">    <span class="k">return</span> <span class="nx">viewerProfile</span><span class="p">.</span><span class="nx">network</span><span class="p">.</span><span class="nx">includes</span><span class="p">(</span><span class="nx">accountId</span><span class="p">);</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">  
+</span> <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Over in <code>resolvers.js</code>, we’ll first add resolvers for the <code>network</code> and <code>isInNetwork</code> fields for the <code>Profile</code> type:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Profile</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+<span class="hll">    <span class="nx">network</span><span class="p">(</span><span class="nx">profile</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getNetworkProfiles</span><span class="p">(</span><span class="nx">profile</span><span class="p">.</span><span class="nx">network</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span>    <span class="nx">id</span><span class="p">(</span><span class="nx">profile</span><span class="p">)</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">profile</span><span class="p">.</span><span class="nx">_id</span><span class="p">;</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">isInNetwork</span><span class="p">(</span><span class="nx">profile</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span><span class="p">,</span> <span class="nx">user</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">checkViewerHasInNetwork</span><span class="p">(</span>
+</span><span class="hll">        <span class="nx">user</span><span class="p">.</span><span class="nx">sub</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">profile</span><span class="p">.</span><span class="nx">accountId</span>
+</span><span class="hll">      <span class="p">);</span>
+</span>    <span class="p">}</span>
+  <span class="p">},</span>
+
+  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>We’ll also create the resolvers for the <code>addToNetwork</code> and <code>removeFromNetwork</code> mutations:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Mutation</span><span class="o">:</span> <span class="p">{</span>
+<span class="hll">    <span class="nx">addToNetwork</span><span class="p">(</span>
+</span><span class="hll">      <span class="nx">root</span><span class="p">,</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">accountId</span><span class="p">,</span> <span class="nx">networkMemberId</span> <span class="p">}</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">}</span>
+</span><span class="hll">    <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">addToNetwork</span><span class="p">(</span><span class="nx">accountId</span><span class="p">,</span> <span class="nx">networkMemberId</span><span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span>    <span class="c1">// ...</span>
+<span class="hll">    <span class="nx">removeFromNetwork</span><span class="p">(</span>
+</span><span class="hll">      <span class="nx">root</span><span class="p">,</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">input</span><span class="o">:</span> <span class="p">{</span> <span class="nx">accountId</span><span class="p">,</span> <span class="nx">networkMemberId</span> <span class="p">}</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">}</span>
+</span><span class="hll">    <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">removeFromNetwork</span><span class="p">(</span>
+</span><span class="hll">        <span class="nx">accountId</span><span class="p">,</span>
+</span><span class="hll">        <span class="nx">networkMemberId</span>
+</span><span class="hll">      <span class="p">);</span>
+</span><span class="hll">    <span class="p">},</span>
+</span>    <span class="c1">// ...</span>
+  <span class="p">}</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can try out the mutations in Explorer. First, we’ll add a user to another user’s network:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">AddToNetwork</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">NetworkMemberInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">addToNetwork</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">fullName</span>
+    <span class="k">username</span>
+    <span class="k">account</span> <span class="p">{</span>
+      <span class="k">id</span>
+    <span class="p">}</span>
+    <span class="k">network</span> <span class="p">{</span>
+      <span class="k">fullName</span>
+      <span class="k">username</span>
+      <span class="k">account</span> <span class="p">{</span>
+        <span class="k">id</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;accountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;networkMemberId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625c652808eac7006851b39f&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;addToNetwork&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-lot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span>
+      <span class="p">},</span>
+      <span class="nt">&quot;network&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+          <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Marky Marked&quot;</span><span class="p">,</span>
+          <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;funkybunch&quot;</span><span class="p">,</span>
+          <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625c652808eac7006851b39f&quot;</span>
+          <span class="p">}</span>
+        <span class="p">}</span>
+      <span class="p">]</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Now if we re-run the <code>profiles</code> query while still authenticated as the user that ran the mutation, we can see that the <code>isInNetwork</code> value for their network member is <code>true</code>:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Profiles</span> <span class="p">{</span>
+  <span class="k">profiles</span> <span class="p">{</span>
+    <span class="k">username</span>
+    <span class="k">isInNetwork</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;profiles&quot;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;isInNetwork&quot;</span><span class="p">:</span> <span class="kc">false</span>
+      <span class="p">},</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;funkybunch&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;isInNetwork&quot;</span><span class="p">:</span> <span class="kc">true</span>
+      <span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We can try removing that user from their network as well:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Mutation</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">mutation</span> <span class="k">RemoveFromNetwork</span><span class="p">(</span><span class="nv">$input</span><span class="p">:</span> <span class="k">NetworkMemberInput</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">removeFromNetwork</span><span class="p">(</span>input: <span class="nv">$input</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">fullName</span>
+    <span class="k">username</span>
+    <span class="k">account</span> <span class="p">{</span>
+      <span class="k">id</span>
+    <span class="p">}</span>
+    <span class="k">network</span> <span class="p">{</span>
+      <span class="k">fullName</span>
+      <span class="k">username</span>
+      <span class="k">account</span> <span class="p">{</span>
+        <span class="k">id</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Mutation Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;input&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;accountId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;networkMemberId&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625c652808eac7006851b39f&quot;</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;removeFromNetwork&quot;</span><span class="p">:</span> <span class="p">{</span>
+      <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-lot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span><span class="p">,</span>
+      <span class="nt">&quot;account&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="nt">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;auth0|625b5a7847a7f7006f3ce7ab&quot;</span>
+      <span class="p">},</span>
+      <span class="nt">&quot;network&quot;</span><span class="p">:</span> <span class="p">[]</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="add-a-search-query-with-full-text-search-in-mongodb">Add a Search Query with Full-Text Search in MongoDB</h2>
+<p>We can add and remove other Marked users as network members now, but it would be helpful if there was a way to search for these other users in the first place! As a finishing touch to the profiles service, we’re going to add a special query that allows users to search for other users by their full name or username. We’ll need to take advantage of a feature of MongoDB that allows <em>full-text search</em> by using a text index to implement this query.</p>
+<p>Full-text search works by searching a <em>full-text database</em> for a specific query. A full-text database contains textual documents, rather than metadata alone. While this might seem like overkill when simply searching for usernames and full names, there are some useful features built into MongoDB’s full-text search that we’ll want to take advantage of here, such as filtering stop words, stemming words, and results scoring.</p>
+<p>Full-text search in MongoDB is a great option for our app because it’s more performant, flexible, and forgiving than other naive approaches to searching through text strings (such as using regex). Using the built-in full-text search will be more than sufficient to satisfy our requirements for Marked, and it will also save us the time and effort of implementing a heavier external solution like Elasticsearch. What’s more, implementing full-text search with MongoDB is surprisingly straightforward.</p>
+<p>But alas, there’s no such thing as a performance free lunch! Full-text search in MongoDB requires us to create a text index, which will have a performance penalty when new documents are inserted. However, this particular performance hit should be relatively small and worth the trade-off for the convenience and effectiveness of using MongoDB’s built-in search mechanism.</p>
+<p>Before we can update the GraphQL schema to add a search query, we need to update the Mongoose <code>Profile</code> model to create a text index. In MongoDB, each collection can only have one text index, but that index can contain multiple fields. We’ll add the <code>fullName</code> and <code>username</code> fields to the text index for the profiles collection.</p>
+<p>In the <code>Profile.js</code> file, add the following line of code after instantiating the <code>Profile</code> schema:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/models/Profile.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="hll"><span class="nx">profileSchema</span><span class="p">.</span><span class="nx">index</span><span class="p">({</span> <span class="nx">fullName</span><span class="o">:</span> <span class="s2">&quot;text&quot;</span><span class="p">,</span> <span class="nx">username</span><span class="o">:</span> <span class="s2">&quot;text&quot;</span> <span class="p">});</span>
+</span><span class="hll">
+</span><span class="kr">const</span> <span class="nx">Profile</span> <span class="o">=</span> <span class="nx">mongoose</span><span class="p">.</span><span class="nx">model</span><span class="p">(</span><span class="s2">&quot;Profile&quot;</span><span class="p">,</span> <span class="nx">profileSchema</span><span class="p">);</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">Profile</span><span class="p">;</span>
+</pre></div>
+
+<p>If we restart the profiles service right now, we can see that our index has been created when we browse to the “Indexes” tab in MongoDB Compass:</p>
+<p><img src="../../images/screenshots/mongo-profiles-index.png" alt="New text index of the fullName and username fields in MongoDB Compass" /><br />
+</p>
+<p>If we were to change anything about this text index in the future (for example, add another field to it), then we would need to delete the existing text index here so it can be recreated on the server restart. In the profiles service’s type definitions, we will add a new field on the root <code>Query</code> type to support user profile search:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="kt">type</span> <span class="k">Query</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+<span class="hll">  <span class="s2">&quot;Performs a search of user profiles. Results are available in descending order by relevance only.&quot;</span>
+</span><span class="hll">  <span class="k">searchProfiles</span><span class="p">(</span>
+</span><span class="hll">    <span class="s2">&quot;The text string to search for in usernames or full names.&quot;</span>
+</span><span class="hll">    query: <span class="k">String</span><span class="p">!</span>
+</span><span class="hll">  <span class="p">):</span> <span class="p">[</span><span class="k">Profile</span><span class="p">]</span>
+</span><span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>In <code>ProfilesDataSource.js</code>, we’ll add a new <code>searchProfiles</code> method:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">searchProfiles</span><span class="p">(</span><span class="nx">searchString</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">Profile</span><span class="p">.</span><span class="nx">find</span><span class="p">(</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">$text</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$search</span><span class="o">:</span> <span class="nx">searchString</span> <span class="p">}</span> <span class="p">},</span>
+</span><span class="hll">      <span class="p">{</span> <span class="nx">score</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$meta</span><span class="o">:</span> <span class="s2">&quot;textScore&quot;</span> <span class="p">}</span> <span class="p">}</span>
+</span><span class="hll">    <span class="p">)</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">sort</span><span class="p">({</span> <span class="nx">score</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$meta</span><span class="o">:</span> <span class="s2">&quot;textScore&quot;</span> <span class="p">},</span> <span class="nx">_id</span><span class="o">:</span> <span class="o">-</span><span class="mi">1</span> <span class="p">})</span>
+</span><span class="hll">      <span class="p">.</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>There are a few things to note in the code above. The first is the use of the <code>$text</code> query operator. The string of text we search for may contain multiple words, so this operator tokenizes the string value of the <code>$search</code> field using whitespace and punctuation delimiters and then performs a logical OR on all of the tokens. In other words, MongoDB will look through the applicable fields in the profile documents to find instances of any of the words in the search string.</p>
+<p>The second thing to note is that we pass in a <em>projection</em> as a second argument so that the <code>textScore</code> is included in the returned document. We want to include the <code>textScore</code> so that we can sort on it later—meaning that we will sort the matched documents based on the relevance score MongoDB assigns them. For our search-sorting purposes, the sort expression that we use to sort the search results (using the chained <code>sort</code> method) looks like this:</p>
+<div class="highlight"><pre><span></span><span class="p">{</span> <span class="nx">score</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$meta</span><span class="o">:</span> <span class="s2">&quot;textScore&quot;</span> <span class="p">},</span> <span class="nx">_id</span><span class="o">:</span> <span class="o">-</span><span class="mi">1</span> <span class="p">}</span>
+</pre></div>
+
+<p>Again, <code>{ $meta: "textScore" }</code> sorts the documents in descending order by relevance, and we add a criterion of <code>id: -1</code> to further sort the scored documents by their IDs afterward. The secondary <code>_id</code>-based sort will be necessary to successfully implement cursor-based pagination in the next chapter.</p>
+<p>Lastly, we’ll call the new data source method inside of the <code>searchProfiles</code> resolver:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/resolvers.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">resolvers</span> <span class="o">=</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">Query</span><span class="o">:</span> <span class="p">{</span>
+    <span class="c1">// ...</span>
+    <span class="nx">profiles</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="nx">args</span><span class="p">,</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">getProfiles</span><span class="p">();</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">searchProfiles</span><span class="p">(</span><span class="nx">root</span><span class="p">,</span> <span class="p">{</span> <span class="nx">query</span> <span class="p">},</span> <span class="p">{</span> <span class="nx">dataSources</span> <span class="p">})</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">return</span> <span class="nx">dataSources</span><span class="p">.</span><span class="nx">profilesAPI</span><span class="p">.</span><span class="nx">searchProfiles</span><span class="p">(</span><span class="nx">query</span><span class="p">);</span>
+</span>    <span class="p">}</span>
+  <span class="p">},</span>
+
+  <span class="c1">// ...</span>
+<span class="p">};</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">resolvers</span><span class="p">;</span>
+</pre></div>
+
+<p>With the resolver in place, we can now test the new operation. Try searching for a user by username:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">SearchProfiles</span><span class="p">(</span><span class="nv">$query</span><span class="p">:</span> <span class="k">String</span><span class="p">!)</span> <span class="p">{</span>
+  <span class="k">searchProfiles</span><span class="p">(</span>query: <span class="nv">$query</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">fullName</span>
+    <span class="k">username</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;searchProfiles&quot;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-Lot&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+      <span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Try updating the query variables for the same search operation to look for two users at once, using a mix of username and full name strings:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="s2">&quot;query&quot;: &quot;Sir funkybunch&quot;</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;data&quot;</span><span class="p">:</span> <span class="p">{</span>
+    <span class="nt">&quot;searchProfiles&quot;</span><span class="p">:</span> <span class="p">[</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Marky Marked&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;funkybunch&quot;</span>
+      <span class="p">},</span>
+      <span class="p">{</span>
+        <span class="nt">&quot;fullName&quot;</span><span class="p">:</span> <span class="s2">&quot;Sir Marks-a-Lot&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;username&quot;</span><span class="p">:</span> <span class="s2">&quot;marksalot&quot;</span>
+      <span class="p">}</span>
+    <span class="p">]</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<h2 id="summary">Summary</h2>
+<p>We have now built out the majority of the profiles service. We set up MongoDB and used Mongoose as an ODM to create a schema for the profiles collection. Using the data in the database’s profiles collection, we built out a second subgraph and composed it into the supergraph. We can now support a variety of queries and mutations in this service, including a search query to retrieve user profiles by username or full name. We also had an opportunity to reuse the <code>DateTime</code> Scalar type and authorization directives from the shared library that we created in Chapter 3.</p>
+<p>In the next chapter, we’ll augment the profiles service with pagination—an important feature when dealing with large lists of data such as the collection of user profiles.</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

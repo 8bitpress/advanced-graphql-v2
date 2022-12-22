@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#api-performance-and-security-considerations">Chapter 7: API Performance and Security Considerations</a>
+<ul>
+<li><a href="#potential-performance-and-security-issues">Potential Performance and Security Issues</a></li>
+<li><a href="#configure-automatic-persisted-queries">Configure Automatic Persisted Queries</a></li>
+<li><a href="#limit-query-depth">Limit Query Depth</a></li>
+<li><a href="#batch-database-queries-using-dataloader">Batch Database Queries Using DataLoader</a></li>
+<li><a href="#restrict-api-discoverability">Restrict API Discoverability</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="api-performance-and-security-considerations">Chapter 7: API Performance and Security Considerations</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Configure Automatic Persisted Queries with Apollo to optimize network requests</li>
+<li>Protect the GraphQL API from excessively nested queries by limiting query depth</li>
+<li>Use the DataLoader package to batch requests for data from MongoDB and Auth0</li>
+<li>Restrict API discoverability by masking default error messages</li>
+</ul>
+</div>
+<h2 id="potential-performance-and-security-issues">Potential Performance and Security Issues</h2>
+<p>The Marked GraphQL API has come a long way over the last six chapters, but before we add the fourth and final subgraph we should pause and explore what can be done to make our current implementation more secure and performant.</p>
+<p>Up to this point, we haven’t taken any intentional steps to optimize the performance of this GraphQL API. While Apollo Gateway’s query planning algorithm will do its best to make the fewest network hops possible to different subgraph services while resolving all of the fields requested in an operation, it’s up to us to optimize anything else on either side of the gateway that may add avoidable latency to requests.</p>
+<p>On the security side, we’ve made relatively more progress by adding access control via Auth0-supported user authentication and incorporating the <code>@private</code> and <code>@owner</code> custom directives to handle field-level authorization. However, there are still some key points of vulnerability that we should address before this API is shipped to production. And by taking certain security measures to guard against bad actors, we will simultaneously protect it from non-malicious clients who may inadvertently send requests that place excessive load on the API’s backing data sources.</p>
+<p>Luckily, we can address many key areas of present concern with small configuration changes to Apollo Gateway or Apollo Server. Specifically, we will focus on:</p>
+<ul>
+<li>Complex queries that result in large <code>POST</code> bodies sent over the wire from client applications</li>
+<li>The uncapped depth to which clients may presently nest fields in an operation</li>
+<li>Duplicate queries sent to Auth0 and MongoDB to resolve the same field data that could instead be batched into fewer requests to the data source</li>
+<li>Exposure of the GraphQL API schema to the outside world</li>
+</ul>
+<p>As we address the concerns listed above, do keep in mind that the full list of topics related to optimizing and securing a GraphQL API in production environments could easily fill a book on its own. Our approach will be driven by quick wins that are available in the Apollo software that we’re already using (plus a couple of additional packages) as well as some essential “don’t leave home without it” best practices for readying GraphQL APIs for production environments. Additional resources for further study are recommended throughout the chapter.</p>
+<h2 id="configure-automatic-persisted-queries">Configure Automatic Persisted Queries</h2>
+<p>When clients send requests to GraphQL APIs, they often do so using the <code>POST</code> HTTP request method as a default. However, the GraphQL specification doesn’t mandate the usage of <code>POST</code> requests. In fact, it doesn’t even require that HTTP be used as a transport layer or that serialized JSON be used to represent the operation or format the response.</p>
+<p>That said, the <code>POST</code> verb is a common default for GraphQL requests because <code>GET</code> requests have size limits that a complex operation document may exceed. However, relying on <code>POST</code> for this specific reason means that a large amount of data may go over the wire within the context of a single request just to deliver the operation document to the Apollo Server. Additionally, allowing clients to send <code>GET</code> requests would also facilitate the use of browser caches and content delivery networks to optimize API performance further later on.</p>
+<p>To reduce operation document size and reap the caching-related benefits of <code>GET</code> requests, Apollo offers a solution to optimize the size of requests made to a GraphQL API using what it calls <a href="https://www.apollographql.com/docs/apollo-server/performance/apq/">Automatic Persisted Queries</a>, or APQ for short. The premise behind APQ is that rather than always sending the serialized operation document for a specific operation’s request payload, we can send a hashed representation of it instead. If the server has seen the hashed operation before, then it will be stored in a cache on the server with the hash as a key and the full document as its value. We can visualize the process as follows:</p>
+<p><img src="../../images/diagrams/apq-exists.png" class="center-no-caption no-inline-width-epub" alt="Diagram of a query where the query hash already exists" style="width:80.0%" /></p>
+<p>If the server hasn’t seen the hashed version of the operation before, then it will make a subsequent request to the client to get the full document to execute the operation for that request while also caching it for later use:</p>
+<p><img src="../../images/diagrams/apq-does-not-exist.png" class="center-no-caption no-inline-width-epub" alt="Diagram of a query where the query has does not exist yet" style="width:80.0%" /></p>
+<p>One of the best parts about APQ is that it’s supported in Apollo Server out of the box, so GraphQL clients such as <a href="https://www.apollographql.com/docs/react/api/link/persisted-queries">Apollo Client</a> can be configured to send these hashed queries to help save bandwidth and time for the user when making requests to the gateway. Additionally, because Apollo Gateway also acts as a client to the subgraph’s GraphQL servers, we can configure APQ for those requests as well.</p>
+<p><img src="../../images/diagrams/apq-in-federated-graph.png" alt="APQ used for requests to a gateway and the subgraphs" /><br />
+</p>
+<p>We can test if APQ is working using <code>curl</code> at the command line. With the gateway up and running, we’ll attempt to run a basic <code>{__typename}</code> operation via a <code>GET</code> request using its hash with a persisted query:</p>
+<div class="highlight"><pre><span></span>curl -g <span class="s1">&#39;http://localhost:4000/?extensions={&quot;persistedQuery&quot;:{&quot;version&quot;:1,&quot;sha256Hash&quot;:&quot;ecf4edb46db40b5132295c0291d62fb65d6759a9eedfa4d5d612dd5ec54a6b38&quot;}}&#39;</span>
+</pre></div>
+
+<p>We will see the following error message as a response:</p>
+<div class="highlight"><pre><span></span><span class="o">{</span><span class="s2">&quot;errors&quot;</span>:<span class="o">[{</span><span class="s2">&quot;message&quot;</span>:<span class="s2">&quot;PersistedQueryNotFound&quot;</span>,<span class="s2">&quot;extensions&quot;</span>:<span class="o">{</span>...<span class="o">}}]}</span>
+</pre></div>
+
+<p>We receive this error message because the server hasn’t seen this query before, and therefore hasn’t persisted the hash and its full operation document value in the cache. If we send the request again with the full query and its hash, then the server will send back the appropriate data and cache the query for future use:</p>
+<div class="highlight"><pre><span></span>curl -g <span class="s1">&#39;http://localhost:4000/?query={__typename}&amp;extensions={&quot;persistedQuery&quot;:{&quot;version&quot;:1,&quot;sha256Hash&quot;:&quot;ecf4edb46db40b5132295c0291d62fb65d6759a9eedfa4d5d612dd5ec54a6b38&quot;}}&#39;</span>
+</pre></div>
+
+<p>We will now see the following response:</p>
+<div class="highlight"><pre><span></span><span class="o">{</span><span class="s2">&quot;data&quot;</span>:<span class="o">{</span><span class="s2">&quot;__typename&quot;</span>:<span class="s2">&quot;Query&quot;</span><span class="o">}}</span>
+</pre></div>
+
+<p>Now we can try sending the original hashed query again:</p>
+<div class="highlight"><pre><span></span>curl -g <span class="s1">&#39;http://localhost:4000/?extensions={&quot;persistedQuery&quot;:{&quot;version&quot;:1,&quot;sha256Hash&quot;:&quot;ecf4edb46db40b5132295c0291d62fb65d6759a9eedfa4d5d612dd5ec54a6b38&quot;}}&#39;</span>
+</pre></div>
+
+<p>This time, we should see the same data as the query above that included the full operation document instead of the <code>PersistedQueryNotFound</code> error response.</p>
+<p>As noted, APQ works well with <code>GET</code> requests but it can also help reduce the overall size of requests from clients that continue to use the <code>POST</code> verb too. To illustrate, we’ll explore a more complex example. Imagine an operation for a list of profiles that queries some user metadata and related account data for each profile, as well as paginated lists of network members, bookmarks, and recommended bookmarks for each user. The operation document for this query would be lengthy, especially with <code>PageInfo</code> fields included for all four paginated list fields. Try running a non-APQ version of the request using this command with a valid JWT included as a header:</p>
+<div class="highlight"><pre><span></span>curl -d <span class="s1">&#39;{&quot;operationName&quot;:&quot;Profiles&quot;,&quot;variables&quot;:{},&quot;query&quot;:&quot;query Profiles {\n  profiles(first: 10) {\n    edges {\n      node {\n        username\n        interests\n        account {\n          email\n        }\n        network(first: 10) {\n          edges {\n            node {\n              username\n              interests\n            }\n          }\n          pageInfo {\n            hasPreviousPage\n            hasNextPage\n            startCursor\n            endCursor\n          }\n        }\n        bookmarks(first: 10) {\n          edges {\n            node {\n              tags\n              title\n              url\n            }\n          }\n          pageInfo {\n            hasPreviousPage\n            hasNextPage\n            startCursor\n            endCursor\n          }\n        }\n        recommendedBookmarks(first: 10) {\n          edges {\n            node {\n              tags\n              title\n              url\n            }\n          }\n          pageInfo {\n            hasPreviousPage\n            hasNextPage\n            startCursor\n            endCursor\n          }\n        }\n      }\n    }\n    pageInfo {\n      hasPreviousPage\n      hasNextPage\n      startCursor\n      endCursor\n    }\n  }\n}&quot;}&#39;</span> -H <span class="s2">&quot;Content-Type: application/json&quot;</span> -H <span class="s2">&quot;Authorization: Bearer eyJhbGciOiJSUzI1NiIs...&quot;</span> http://localhost:4000 -v
+</pre></div>
+
+<p>In the command output, we can see that the request has a <code>Content-Length</code> of <code>1250</code> (which is the length of the request body in bytes). If we send the <code>Profiles</code> operation again with the APQ data included in the body of the request, then we can see that the new <code>Content-Length</code> is now <code>1376</code> because it also contains the hashed query:</p>
+<div class="highlight"><pre><span></span>curl -d <span class="s1">&#39;{&quot;operationName&quot;:&quot;Profiles&quot;,&quot;variables&quot;:{},&quot;query&quot;:&quot;query Profiles {\n  profiles(first: 10) {\n    edges {\n      node {\n        username\n        interests\n        account {\n          email\n        }\n        network(first: 10) {\n          edges {\n            node {\n              username\n              interests\n            }\n          }\n          pageInfo {\n            hasPreviousPage\n            hasNextPage\n            startCursor\n            endCursor\n          }\n        }\n        bookmarks(first: 10) {\n          edges {\n            node {\n              tags\n              title\n              url\n            }\n          }\n          pageInfo {\n            hasPreviousPage\n            hasNextPage\n            startCursor\n            endCursor\n          }\n        }\n        recommendedBookmarks(first: 10) {\n          edges {\n            node {\n              tags\n              title\n              url\n            }\n          }\n          pageInfo {\n            hasPreviousPage\n            hasNextPage\n            startCursor\n            endCursor\n          }\n        }\n      }\n    }\n    pageInfo {\n      hasPreviousPage\n      hasNextPage\n      startCursor\n      endCursor\n    }\n  }\n}&quot;,&quot;extensions&quot;:{&quot;persistedQuery&quot;:{&quot;version&quot;:1,&quot;sha256Hash&quot;:&quot;0a2ff72d396bdbd1b8dafb5631e72eea7c39c4bfdd9bc7ac3aa9db34cee39bc2&quot;}}}&#39;</span> -H <span class="s2">&quot;Content-Type: application/json&quot;</span> -H <span class="s2">&quot;Authorization: Bearer eyJhbGciOiJSUzI1NiIs...&quot;</span> http://localhost:4000 -v
+</pre></div>
+
+<p>Now that the operation document is cached, we can rerun it by sending the APQ hash alone:</p>
+<div class="highlight"><pre><span></span>curl -d <span class="s1">&#39;{&quot;operationName&quot;:&quot;Profiles&quot;,&quot;variables&quot;:{},&quot;extensions&quot;:{&quot;persistedQuery&quot;:{&quot;version&quot;:1,&quot;sha256Hash&quot;:&quot;0a2ff72d396bdbd1b8dafb5631e72eea7c39c4bfdd9bc7ac3aa9db34cee39bc2&quot;}}}&#39;</span> -H <span class="s2">&quot;Content-Type: application/json&quot;</span> -H <span class="s2">&quot;Authorization: Bearer eyJhbGciOiJSUzI1NiIs...&quot;</span> http://localhost:4000 -v
+</pre></div>
+
+<p>With a new <code>Content-Length</code> of <code>169</code>, our <code>Profiles</code> query request body is now 13.5% of its original size. As previously noted, we can also configure the gateway to send APQ requests to the underlying subgraph services during query resolution. Unlike in Apollo Server, this feature is not enabled by default in Apollo Gateway, but we can opt into using it by setting the <code>apq</code> option in the constructor of the <code>RemoteGraphQLDataSource</code> in <code>apollo.js</code> as follows:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+    <span class="c1">// ...</span>
+    <span class="nx">buildService</span><span class="p">({</span> <span class="nx">url</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="nx">RemoteGraphQLDataSource</span><span class="p">({</span>
+<span class="hll">        <span class="nx">apq</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+</span>        <span class="nx">url</span><span class="p">,</span>
+        <span class="c1">// ...</span>
+      <span class="p">});</span>
+    <span class="p">}</span>
+  <span class="p">});</span>
+
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>Because all of our subgraphs are implemented using Apollo Server, they will automatically support APQ-style requests from the gateway, so no additional code is required in each subgraph.</p>
+<p>Before moving on we should address what we mean by the “cache” when we talk about APQ. By default, this is an in-memory cache that Apollo Server will manage for us behind the scenes. In our current implementation, that means that the gateway and three subgraphs will each manage its in-memory APQ cache within the context of each running process. This option is fine for development purposes but you can easily integrate Redis or Memcached to act as an APQ registry, which would be preferred over the in-memory approach in production environments.</p>
+<h2 id="limit-query-depth">Limit Query Depth</h2>
+<p>A key area where performance optimization and security intersect in GraphQL is where we put guardrails in place to limit the amount of data a client can request in a single operation. These requests may be unintentionally malicious, but it is nonetheless important to place some clear constraints on what kinds of operations a client can send on behalf of a user, how much data can be queried at once, and how deeply nested the fields can be in the operation document.</p>
+<p>We already put some limitations on what kind of data a client can request by adding authorization directives to the subgraph schemas. We also limited how much data a client can request from a list field by setting a maximum of 100 items per page in the <code>Pagination</code> class.</p>
+<p>What remains outstanding is that we have no way to limit the amount of data across all fields in an operation. A particular area of concern for us is the depth to which fields are nested. One of the main advantages of using GraphQL is the ability to request data from the API in a shape that makes sense for the client and without making multiple requests for all of the different pieces of the data. However, computationally expensive queries such as the following are possible when this power is left unchecked:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Profiles</span> <span class="p">{</span>
+  <span class="k">profiles</span><span class="p">(</span>first: <span class="mi">10</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">username</span>
+        <span class="k">network</span><span class="p">(</span>first: <span class="mi">10</span><span class="p">)</span> <span class="p">{</span>
+          <span class="k">edges</span> <span class="p">{</span>
+            <span class="k">node</span> <span class="p">{</span>
+              <span class="k">username</span>
+              <span class="k">network</span><span class="p">(</span>first: <span class="mi">10</span><span class="p">)</span> <span class="p">{</span>
+                <span class="k">edges</span> <span class="p">{</span>
+                  <span class="k">node</span> <span class="p">{</span>
+                    <span class="k">username</span>
+                    <span class="k">network</span><span class="p">(</span>first: <span class="mi">10</span><span class="p">)</span> <span class="p">{</span>
+                      <span class="k">edges</span> <span class="p">{</span>
+                        <span class="k">node</span> <span class="p">{</span>
+                          <span class="k">username</span>
+                        <span class="p">}</span>
+                      <span class="p">}</span>
+                    <span class="p">}</span>
+                  <span class="p">}</span>
+                <span class="p">}</span>
+              <span class="p">}</span>
+            <span class="p">}</span>
+          <span class="p">}</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>The first page of results for this query could return up to 10,000 different usernames at once! To limit the exponential overhead of operations such as this, we can install a readily available package that will allow us to add a validation rule that checks query depth in the gateway before it requests data from the subgraph services:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i graphql-depth-limit@1.1.0
+</pre></div>
+
+<p>We’ll import <code>depthLimit</code> into the server’s <code>apollo.js</code> file:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+<span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloServerPluginDrainHttpServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-core&quot;</span><span class="p">;</span>
+<span class="hll"><span class="kr">import</span> <span class="nx">depthLimit</span> <span class="nx">from</span> <span class="s2">&quot;graphql-depth-limit&quot;</span><span class="p">;</span>
+</span>
+<span class="c1">// ...</span>
+</pre></div>
+
+<p>Next, we’ll add a <code>validationRules</code> property to the <code>ApolloServer</code> options that will set a maximum <code>depthLimit</code> of <code>10</code>:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+    <span class="nx">gateway</span><span class="p">,</span>
+    <span class="nx">plugins</span><span class="o">:</span> <span class="p">[</span><span class="nx">ApolloServerPluginDrainHttpServer</span><span class="p">({</span> <span class="nx">httpServer</span> <span class="p">})],</span>
+    <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+      <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">user</span> <span class="o">||</span> <span class="kc">null</span><span class="p">;</span>
+      <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span> <span class="p">};</span>
+<span class="hll">    <span class="p">},</span>
+</span><span class="hll">    <span class="nx">validationRules</span><span class="o">:</span> <span class="p">[</span><span class="nx">depthLimit</span><span class="p">(</span><span class="mi">10</span><span class="p">)]</span>
+</span>  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>If we try running the previous query in Explorer now, we’ll get an error message that says <code>'Profiles' exceeds maximum operation depth of 10</code>. If we remove the innermost <code>network</code> field, then our query will run again without errors.</p>
+<div class="boxout">
+<p><strong>What about rate limiting and query cost analysis?</strong></p>
+<p>Limiting query depth can be an essential element of a demand control strategy for a GraphQL API, but it may not be enough. For example, you may also need to limit query breadth to set a maximum number of root-level fields that may be included in an operation to prevent various kinds of batching attacks.</p>
+<p>However, depth and breadth limiting together may not provide the necessary level of nuance for the overall amount limiting of data in individual API requests. Further, you may need to implement a full rate-limiting strategy for your API if you allow third parties access to it. In these scenarios, you may be better serviced by using <em>query cost analysis</em> to assign a total cost to an operation based on the fields requested and then reject certain operations that exceed a maximum set cost per query and also apply that cost against a rate limit.</p>
+<p>Where query cost analysis is warranted, common approaches to doing this include adding validation rules to a GraphQL API and using type system directives to annotate parts of the schema with various cost-related metadata. There’s no one-size-fits-all approach to doing query cost analysis, but there are some existing open-source solutions that you can use to add support for this to a GraphQL API as long as the assumptions that these packages make on your behalf align with your query cost analysis goals.</p>
+<p>IBM has also done conducted some recent research in this area that may be of interest:</p>
+<ul>
+<li><a href="https://arxiv.org/abs/2009.05632">A Principled Approach to GraphQL Query Cost Analysis (research paper)</a></li>
+<li><a href="https://ibm.github.io/graphql-specs/cost-spec.html">GraphQL Cost Directives (draft specification document)</a></li>
+</ul>
+</div>
+<h2 id="batch-database-queries-using-dataloader">Batch Database Queries Using DataLoader</h2>
+<p>Now that we’ve placed a cap on the depth to which fields can be nested we will optimize how repeated requests for the same data are made within the context of a single query operation. For example, when we search for bookmarks on a particular topic we can also query data about the user who owns each bookmark:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">SearchBookmarks</span><span class="p">(</span><span class="nv">$query</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">searchBookmarks</span><span class="p">(</span>query: <span class="nv">$query</span>, first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">title</span>
+        <span class="k">url</span>
+        <span class="k">owner</span> <span class="p">{</span>
+          <span class="k">id</span>
+          <span class="k">username</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;graphql&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">5</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>We end up with an <em>N+1 problem</em> on our hands here because for each <code>searchBookmarks</code> query we end up making “N” additional queries to the database to resolve the <code>owner</code> field for those bookmarks. What’s more, a number of these N queries for the owners’ data are potentially requesting the same data too—there’s always a chance that multiple bookmarks from the same user will appear on a single page of search results.</p>
+<p>We can see this problem in action by turning on Mongoose’s debug mode:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/config/mongoose.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">mongoose</span> <span class="nx">from</span> <span class="s2">&quot;mongoose&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initMongoose</span><span class="p">()</span> <span class="p">{</span>
+<span class="hll">  <span class="c1">// ...</span>
+</span><span class="hll">
+</span>  <span class="nx">mongoose</span><span class="p">.</span><span class="nx">set</span><span class="p">(</span><span class="s2">&quot;debug&quot;</span><span class="p">,</span> <span class="kc">true</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initMongoose</span><span class="p">;</span>
+</pre></div>
+
+<p>When we run the previous <code>SearchBookmarks</code> query in Explorer we will see all of the queries made to MongoDB logged to the console. The logs will look something like this:</p>
+<div class="highlight"><pre><span></span><span class="c1"># ...</span>
+Mongoose: profiles.findOne<span class="o">({</span> accountId: <span class="s1">&#39;auth0|625b5a7847a7f7006f3ce7ab&#39;</span> <span class="o">}</span>, <span class="o">{</span> projection: <span class="o">{}</span> <span class="o">})</span>
+Mongoose: profiles.findOne<span class="o">({</span> accountId: <span class="s1">&#39;auth0|625b5a7847a7f7006f3ce7ab&#39;</span> <span class="o">}</span>, <span class="o">{</span> projection: <span class="o">{}</span> <span class="o">})</span>
+Mongoose: profiles.findOne<span class="o">({</span> accountId: <span class="s1">&#39;auth0|625c652808eac7006851b39f&#39;</span> <span class="o">}</span>, <span class="o">{</span> projection: <span class="o">{}</span> <span class="o">})</span>
+Mongoose: profiles.findOne<span class="o">({</span> accountId: <span class="s1">&#39;auth0|625c652808eac7006851b39f&#39;</span> <span class="o">}</span>, <span class="o">{</span> projection: <span class="o">{}</span> <span class="o">})</span>
+Mongoose: profiles.findOne<span class="o">({</span> accountId: <span class="s1">&#39;auth0|625b5a7847a7f7006f3ce7ab&#39;</span> <span class="o">}</span>, <span class="o">{</span> projection: <span class="o">{}</span> <span class="o">})</span>
+</pre></div>
+
+<p>In the sample output above, we can see that we’re running MongoDB queries to fetch one user three times and another user two times to get the data for the bookmark owners, so this approach to resolving the children of the <code>owner</code> field likely won’t scale very well in the future!</p>
+<p>Under the hood, Apollo Federation does take care of batching the requests from the bookmarks service to the profiles service per field, so there is only one query made between services to resolve all five profiles for the bookmarks’ <code>owner</code> field. However, once that request reaches the profiles service it’s up to us to deduplicate and batch queries made to MongoDB for the required profile documents.</p>
+<p>The DataLoader library was designed specifically for this purpose and we’re going to use it here to optimize this aspect of our data fetching layer. Using DataLoader we can make a few small changes to how profiles are fetched in the <code>ProfilesDataSource</code> class and instantly cut the five separate database queries for profiles down to one. First, we’ll need to install the DataLoader package in the profiles service:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i dataloader@2.1.0
+</pre></div>
+
+<p>Next, we’ll create new <code>dataLoaders.js</code> file in <code>profiles/src/graphql</code> to organize the DataLoader-related code, which we’ll wrap in an <code>initDataLoaders</code> function:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataLoaders.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">DataLoader</span> <span class="nx">from</span> <span class="s2">&quot;dataloader&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="nx">Profile</span> <span class="nx">from</span> <span class="s2">&quot;../models/Profile.js&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initDataLoaders</span><span class="p">()</span> <span class="p">{</span>
+  <span class="c1">// DalaLoaders will be instantiated here and returned in an object...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initDataLoaders</span><span class="p">;</span>
+</pre></div>
+
+<p>To batch our requests, we’ll need to instantiate a new <code>DataLoader</code> object. The <code>DataLoader</code> constructor takes a batch function as an argument, and the batch function will have a <code>keys</code> parameter that represents the array of MongoDB filter documents corresponding to the profiles we want to retrieve. In some cases, we may need to get documents by their <code>accountId</code> field but in others, we may need to use the <code>_id</code> field (for example, in the <code>Profile</code> type’s reference resolver).</p>
+<p>Inside the batch function, we will call the <code>find</code> method on the <code>Profile</code> model object instead of <code>findOne</code> or <code>findById</code> so we can retrieve all of the profile documents at once. We then map over the original <code>keys</code> array to return a new array containing all of the profile documents in the same order as the filter documents that were passed into the function because maintaining the original order is a requirement of DataLoader. Lastly, we must return the <code>profileLoader</code> from the <code>initDataLoaders</code> function:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataLoaders.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initDataLoaders</span><span class="p">()</span> <span class="p">{</span>
+<span class="hll">  <span class="kr">const</span> <span class="nx">profileLoader</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">DataLoader</span><span class="p">(</span><span class="nx">async</span> <span class="nx">keys</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">fieldName</span> <span class="o">=</span> <span class="nb">Object</span><span class="p">.</span><span class="nx">keys</span><span class="p">(</span><span class="nx">keys</span><span class="p">[</span><span class="mi">0</span><span class="p">])[</span><span class="mi">0</span><span class="p">];</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">fieldValues</span> <span class="o">=</span> <span class="nx">keys</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">key</span> <span class="p">=&gt;</span> <span class="nx">key</span><span class="p">[</span><span class="nx">fieldName</span><span class="p">]);</span>
+</span><span class="hll">    <span class="kr">const</span> <span class="nx">profiles</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">Profile</span><span class="p">.</span><span class="nx">find</span><span class="p">({</span>
+</span><span class="hll">      <span class="p">[</span><span class="nx">fieldName</span><span class="p">]</span><span class="o">:</span> <span class="p">{</span> <span class="nx">$in</span><span class="o">:</span> <span class="nx">fieldValues</span> <span class="p">}</span>
+</span><span class="hll">    <span class="p">}).</span><span class="nx">exec</span><span class="p">();</span>
+</span><span class="hll">
+</span><span class="hll">    <span class="k">return</span> <span class="nx">keys</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">key</span> <span class="p">=&gt;</span>
+</span><span class="hll">      <span class="nx">profiles</span><span class="p">.</span><span class="nx">find</span><span class="p">(</span><span class="nx">profile</span> <span class="p">=&gt;</span> <span class="nx">key</span><span class="p">[</span><span class="nx">fieldName</span><span class="p">]</span> <span class="o">===</span> <span class="nx">profile</span><span class="p">[</span><span class="nx">fieldName</span><span class="p">].</span><span class="nx">toString</span><span class="p">())</span>
+</span><span class="hll">    <span class="p">);</span>
+</span><span class="hll">  <span class="p">});</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="k">return</span> <span class="p">{</span> <span class="nx">profileLoader</span> <span class="p">};</span>
+</span><span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initDataLoaders</span><span class="p">;</span>
+</pre></div>
+
+<p>Note that the code in the batch function above assumes that there will only be one field in the filter document that is used as a key. This approach will satisfy our current use case but a more complicated implementation may be required in the future for filter documents that contain multiple fields. Now we can add the loaders to the resolver context for this subgraph:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+<span class="hll"><span class="kr">import</span> <span class="nx">initDataLoaders</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/dataLoaders.js&quot;</span><span class="p">;</span>
+</span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">schema</span><span class="o">:</span> <span class="nx">subgraphSchema</span><span class="p">,</span>
+  <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+<span class="hll">    <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span><span class="p">,</span> <span class="nx">loaders</span><span class="o">:</span> <span class="nx">initDataLoaders</span><span class="p">()</span> <span class="p">};</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>The reason that we add <code>loaders</code> to the context object is that we only want to instantiate the loaders once per request. Now we can make a small adjustment to the <code>ProfilesDataSource</code> class to get direct access to the context object there. The parent <code>DataSource</code> class exposes an <code>initialize</code> method with a <code>config</code> object parameter that contains the <code>context</code> object inside of it. To make this object available to the <code>ProfilesDataSource</code> methods, we’ll set it on a <code>context</code> property for the class:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">initialize</span><span class="p">(</span><span class="nx">config</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">this</span><span class="p">.</span><span class="nx">context</span> <span class="o">=</span> <span class="nx">config</span><span class="p">.</span><span class="nx">context</span><span class="p">;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>Now we can update the <code>getProfile</code> and <code>getProfileById</code> methods so that they use the profile <code>DataLoader</code> and call its <code>load</code> method while passing the appropriate filter document in as an argument:</p>
+<p></p>
+<div class="code-context">
+<p>profiles/src/graphql/dataSources/ProfilesDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">ProfilesDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">getProfile</span><span class="p">(</span><span class="nx">filter</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">context</span><span class="p">.</span><span class="nx">loaders</span><span class="p">.</span><span class="nx">profileLoader</span><span class="p">.</span><span class="nx">load</span><span class="p">(</span><span class="nx">filter</span><span class="p">);</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">  <span class="nx">getProfileById</span><span class="p">(</span><span class="nx">id</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">context</span><span class="p">.</span><span class="nx">loaders</span><span class="p">.</span><span class="nx">profileLoader</span><span class="p">.</span><span class="nx">load</span><span class="p">({</span> <span class="nx">_id</span><span class="o">:</span> <span class="nx">id</span> <span class="p">});</span>
+</span><span class="hll">  <span class="p">}</span>
+</span>
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">ProfilesDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>If we run the <code>SearchBookmarks</code> query again we will see dramatically different output logged to the console, but the same query data will be returned as before in Explorer:</p>
+<div class="highlight"><pre><span></span><span class="c1"># ...</span>
+Mongoose: profiles.find<span class="o">({</span> accountId: <span class="o">{</span> <span class="s1">&#39;$in&#39;</span>: <span class="o">[</span> <span class="s1">&#39;auth0|625b5a7847a7f7006f3ce7ab&#39;</span>, <span class="s1">&#39;auth0|625c652808eac7006851b39f&#39;</span> <span class="o">]</span> <span class="o">}}</span>, <span class="o">{</span> projection: <span class="o">{}</span> <span class="o">})</span>
+</pre></div>
+
+<p>Similarly, if we try running a query that requires the <code>Profile</code> entity’s reference resolver to be called (such as the <code>accounts</code> query with the <code>profile</code> field included), then we should also see that the <code>profileLoader</code> has optimized how these documents are fetched from MongoDB because either the <code>getProfile</code> or <code>getProfileById</code> methods from the <code>ProfilesDataSource</code> will be called from this resolver too.</p>
+<p>We can take our use of DataLoader one step further to also optimize how we request user account data from Auth0. For example, this operation will make N requests to the Auth0 API to fetch account information for each user in the list of profiles:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">Profiles</span><span class="p">(</span><span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">profiles</span><span class="p">(</span>first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">username</span>
+        <span class="k">account</span> <span class="p">{</span>
+          <span class="k">email</span>
+        <span class="p">}</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">5</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>While there’s a 1:1 relationship between profiles and accounts and we know we won’t fetch any duplicates, we can still combine the requests for individual accounts into a single call to the Auth0 API. This is an important consideration for performance because it can dramatically cut down on network requests while fetching the required user account data and it will also help prevent our app from needlessly running into Auth0’s rate limit due to redundant API requests:</p>
+<p>Over in the accounts service, let’s install <code>dataloader</code> there as well:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/</p>
+</div>
+<div class="highlight"><pre><span></span>npm i dataloader@2.1.0
+</pre></div>
+
+<p>As we did with the profiles service, we’ll create a <code>dataLoaders.js</code> file in <code>accounts/src/graphql</code> with a single <code>initDataLoaders</code> function that returns an object containing the instantiated <code>DataLoader</code> that will handle account fetching. The batch function will use the Auth0 API’s <code>getUsers</code> method to fetch the required user accounts by their IDs. Auth0 uses <a href="https://lucene.apache.org/core/2_9_4/queryparsersyntax.html">Lucene query syntax</a> to retrieve users based on search criteria, so our search string must be formed like this:</p>
+<div class="highlight"><pre><span></span>&quot;user_id:auth0|5dddff8b60ac910e2a45574a OR user_id:auth0|5dddff8b769a2d0ed3af4aff ...&quot;
+</pre></div>
+
+<p>To form this string and retrieve the specified user account data from Auth0, the <code>initDataLoaders</code> function will contain the following code:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/dataLoaders.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kr">import</span> <span class="nx">DataLoader</span> <span class="nx">from</span> <span class="s2">&quot;dataloader&quot;</span><span class="p">;</span>
+
+<span class="kr">import</span> <span class="nx">auth0</span> <span class="nx">from</span> <span class="s2">&quot;../config/auth0.js&quot;</span><span class="p">;</span>
+
+<span class="kd">function</span> <span class="nx">initDataLoaders</span><span class="p">()</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">accountLoader</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">DataLoader</span><span class="p">(</span><span class="nx">async</span> <span class="nx">keys</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="kr">const</span> <span class="nx">q</span> <span class="o">=</span> <span class="nx">keys</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">key</span> <span class="p">=&gt;</span> <span class="sb">`user_id:</span><span class="si">${</span><span class="nx">key</span><span class="si">}</span><span class="sb">`</span><span class="p">).</span><span class="nx">join</span><span class="p">(</span><span class="s2">&quot; OR &quot;</span><span class="p">);</span>
+    <span class="kr">const</span> <span class="nx">accounts</span> <span class="o">=</span> <span class="nx">await</span> <span class="nx">auth0</span><span class="p">.</span><span class="nx">getUsers</span><span class="p">({</span> <span class="nx">search_engine</span><span class="o">:</span> <span class="s2">&quot;v3&quot;</span><span class="p">,</span> <span class="nx">q</span> <span class="p">});</span>
+
+    <span class="k">return</span> <span class="nx">keys</span><span class="p">.</span><span class="nx">map</span><span class="p">(</span><span class="nx">key</span> <span class="p">=&gt;</span> <span class="nx">accounts</span><span class="p">.</span><span class="nx">find</span><span class="p">(</span><span class="nx">account</span> <span class="p">=&gt;</span> 
+      <span class="nx">account</span><span class="p">.</span><span class="nx">user_id</span> <span class="o">===</span> <span class="nx">key</span><span class="p">)</span>
+    <span class="p">);</span>
+  <span class="p">});</span>
+
+  <span class="k">return</span> <span class="p">{</span> <span class="nx">accountLoader</span> <span class="p">};</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initDataLoaders</span><span class="p">;</span>
+</pre></div>
+
+<p>The <code>accountLoader</code> batch function is more straightforward than the <code>profileLoader</code> one was because the <code>keys</code> array will only ever contain Auth0 ID strings, rather than the filter document objects that we had to handle to make MongoDB queries. Next, we’ll add the new loader to the <code>context</code> in the <code>index.js</code> file for this service:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/index.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+<span class="hll"><span class="kr">import</span> <span class="nx">initDataLoaders</span> <span class="nx">from</span> <span class="s2">&quot;./graphql/dataLoaders.js&quot;</span><span class="p">;</span>
+</span><span class="c1">// ...</span>
+
+<span class="kr">const</span> <span class="nx">server</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+  <span class="nx">schema</span><span class="o">:</span> <span class="nx">subgraphSchema</span><span class="p">,</span>
+  <span class="nx">context</span><span class="o">:</span> <span class="p">({</span> <span class="nx">req</span> <span class="p">})</span> <span class="p">=&gt;</span> <span class="p">{</span>
+    <span class="kr">const</span> <span class="nx">user</span> <span class="o">=</span> <span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">parse</span><span class="p">(</span><span class="nx">req</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span><span class="p">;</span>
+<span class="hll">    <span class="k">return</span> <span class="p">{</span> <span class="nx">user</span><span class="p">,</span> <span class="nx">loaders</span><span class="o">:</span> <span class="nx">initDataLoaders</span><span class="p">()</span> <span class="p">};</span>
+</span>  <span class="p">},</span>
+  <span class="c1">// ...</span>
+<span class="p">});</span>
+</pre></div>
+
+<p>And make the <code>context</code> available inside the <code>AccountsDataSource</code> class:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/dataSources/AccountsDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">AccountsDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+<span class="hll">  <span class="nx">initialize</span><span class="p">(</span><span class="nx">config</span><span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">    <span class="k">this</span><span class="p">.</span><span class="nx">context</span> <span class="o">=</span> <span class="nx">config</span><span class="p">.</span><span class="nx">context</span><span class="p">;</span>
+</span><span class="hll">  <span class="p">}</span>
+</span><span class="hll">
+</span>  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">AccountsDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>We can now update the <code>getAccountById</code> method to use the <code>DataLoader</code>:</p>
+<p></p>
+<div class="code-context">
+<p>accounts/src/graphql/dataSources/AccountsDataSource.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kr">class</span> <span class="nx">AccountsDataSource</span> <span class="kr">extends</span> <span class="nx">DataSource</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="nx">getAccountById</span><span class="p">(</span><span class="nx">id</span><span class="p">)</span> <span class="p">{</span>
+<span class="hll">    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="nx">context</span><span class="p">.</span><span class="nx">loaders</span><span class="p">.</span><span class="nx">accountLoader</span><span class="p">.</span><span class="nx">load</span><span class="p">(</span><span class="nx">id</span><span class="p">);</span>
+</span>  <span class="p">}</span>
+
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">AccountsDataSource</span><span class="p">;</span>
+</pre></div>
+
+<p>With this code in place, user account data will be fetched with a single query to the Auth0 API when running any operation that requires execution of the <code>Account</code> entity’s reference resolver.</p>
+<h2 id="restrict-api-discoverability">Restrict API Discoverability</h2>
+<p>The final measure that we’ll take to protect the Marked GraphQL API in this chapter will be to limit the discoverability of the API. But before we write any code, let’s pause and explore what it means for a GraphQL API to be “discoverable.”</p>
+<p>As a developer, one of the great things about GraphQL is that information about the schema can be queried from the GraphQL API itself via <em>introspection</em>. In practice, that means that a GraphQL API exposes a special <code>__schema</code> field on the root <code>Query</code> type that allows us to request information about the API itself, such as the names of its various types and fields. You can see introspection in action by running the following query in Explorer:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="k">__schema</span> <span class="p">{</span>
+    <span class="k">types</span> <span class="p">{</span>
+      <span class="k">name</span>
+      <span class="k">fields</span> <span class="p">{</span>
+        <span class="k">name</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Introspection is what makes it possible for tools such as Explorer to know all about our GraphQL schema by simply sharing the API’s endpoint with it. However, it’s considered a best practice to turn off introspection in production for non-public GraphQL APIs to prevent bad actors from learning about the inner workings of your API, including any security vulnerabilities that may have been unknowingly introduced into it.</p>
+<p>The <code>ApolloServer</code> constructor can take a boolean <code>introspection</code> option to indicate whether introspection queries should be allowed against the GraphQL API. By default, introspection is available in Apollo Server unless there is a <code>NODE_ENV</code> environment variable set with a value of <code>production</code>. In that case, introspection will be automatically disabled. Additionally, if someone tries to navigate directly to our GraphQL endpoint in a browser to access Explorer as we have throughout this book, then Apollo Server will show a production version of this landing page when the <code>NODE_ENV</code> is set to <code>production</code> because we usually don’t want to expose GraphQL IDEs in these environments either. You can provide a custom landing page here instead of the Explorer access link if you like.</p>
+<p>Disabling introspection in production environments is an important step toward limiting API discoverability, but it’s only the first step. There are other ways that bad actors can learn just as much about our GraphQL schema as they can with an introspection query. One key area of concern is how errors are returned in API responses. Verbose error details are helpful as we develop the GraphQL API but we should be selective about what kind of error-related information we share with the outside world.</p>
+<p>Again, Apollo Server provides some coverage related to errors where the <code>NODE_ENV</code> is set to either <code>production</code> or <code>test</code> by eliminating the <code>exception.stacktrace</code> data from the <code>extensions</code> key of the response. However, there’s still more that should be done to prevent details about underlying data sources or the schema from leaking through error messages.</p>
+<p>For example, graphql.js (a dependency of Apollo Server) likes to provide us with helpful hints in errors messages such as this when you slightly misspell a field:</p>
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="s2">&quot;errors&quot;</span><span class="o">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="s2">&quot;message&quot;</span><span class="o">:</span> <span class="s2">&quot;Cannot query field \&quot;emal\&quot; on type \&quot;Account\&quot;. Did you mean \&quot;email\&quot;?&quot;</span><span class="p">,</span>
+      <span class="c1">// ...</span>
+    <span class="p">}</span>
+  <span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>Using an open-source tool such as <a href="https://github.com/nikitastupin/clairvoyance">clairvoyance</a> plus a generic word list, we can reconstruct our entire API schema from those graphql.js error messages alone through brute-force guessing and testing of field names and without introspection turned on. To eliminate this exposure, we can set the <code>formatError</code> option in Apollo Server to remove these hints in production environments:</p>
+<p>gateway/src/config/apollo.js</p>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+<span class="hll"><span class="kr">import</span> <span class="p">{</span> <span class="nx">ApolloError</span><span class="p">,</span> <span class="nx">ApolloServer</span> <span class="p">}</span> <span class="nx">from</span> <span class="s2">&quot;apollo-server-express&quot;</span><span class="p">;</span>
+</span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="c1">// ...</span>
+
+  <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloServer</span><span class="p">({</span>
+    <span class="c1">// ...</span>
+<span class="hll">    <span class="nx">validationRules</span><span class="o">:</span> <span class="p">[</span><span class="nx">depthLimit</span><span class="p">(</span><span class="mi">10</span><span class="p">)],</span>
+</span><span class="hll">    <span class="nx">formatError</span><span class="o">:</span> <span class="nx">err</span> <span class="p">=&gt;</span> <span class="p">{</span>
+</span><span class="hll">      <span class="k">if</span> <span class="p">(</span>
+</span><span class="hll">        <span class="nx">err</span><span class="p">.</span><span class="nx">message</span><span class="p">.</span><span class="nx">includes</span><span class="p">(</span><span class="s2">&quot;Did you mean&quot;</span><span class="p">)</span> <span class="o">&amp;&amp;</span>
+</span><span class="hll">        <span class="nx">process</span><span class="p">.</span><span class="nx">env</span><span class="p">.</span><span class="nx">NODE_ENV</span> <span class="o">!==</span> <span class="s2">&quot;development&quot;</span>
+</span><span class="hll">      <span class="p">)</span> <span class="p">{</span>
+</span><span class="hll">        <span class="k">return</span> <span class="k">new</span> <span class="nx">ApolloError</span><span class="p">(</span><span class="s2">&quot;Internal server error&quot;</span><span class="p">);</span>
+</span><span class="hll">      <span class="p">}</span>
+</span><span class="hll">
+</span><span class="hll">      <span class="k">return</span> <span class="nx">err</span><span class="p">;</span>
+</span>    <span class="p">}</span>
+  <span class="p">});</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>Wherever the <code>NODE_ENV</code> is set to <code>production</code> now, the only details returned for these errors will be an <code>Internal server error</code> message:</p>
+<p></p>
+<div class="code-context">
+<p>API Response</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="s2">&quot;errors&quot;</span><span class="o">:</span> <span class="p">[</span>
+    <span class="p">{</span>
+      <span class="s2">&quot;message&quot;</span><span class="o">:</span> <span class="s2">&quot;Internal server error&quot;</span><span class="p">,</span>
+      <span class="s2">&quot;extensions&quot;</span><span class="o">:</span> <span class="p">{}</span>
+    <span class="p">}</span>
+  <span class="p">]</span>
+<span class="p">}</span>
+</pre></div>
+
+<div class="boxout">
+<p>In addition to masking these graphql.js error messages, you may also wish to obscure other details than may be returned in an error response. You can consult the Apollo Server documentation for additional details on <a href="https://www.apollographql.com/docs/apollo-server/data/errors#masking-and-logging-errors">masking error messages</a>.</p>
+</div>
+<p>On a final note, we’ve put some important measures in place throughout this chapter to help protect the Marked GraphQL API from malicious queries that are sent either intentionally or unintentionally, but we have only scratched the surface of what’s possible. Prior to this chapter, we also called out some important security best practices related to federated GraphQL APIs, such as only allowing the gateway to query subgraphs directly in production environments. It’s also a good idea to encrypt traffic between these services too. Beyond these recommendations, you may wish to review the <a href="https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html#query-cost-analysis">OWASP GraphQL Cheat Sheet</a> for additional suggestions on how to guard a GraphQL API against exploitation.</p>
+<h2 id="summary">Summary</h2>
+<p>Throughout this chapter, we made notable strides in improving the performance and security of the Marked GraphQL API. We started by configuring Automatic Persisted Queries to send shorter hashed versions of operations from client applications to the gateway and from the gateway to subgraph services. We also limited the extent to which fields can be nested to guard against malicious queries.</p>
+<p>Turning our attention to how data is retrieved from Auth0 and MongoDB, we used the DataLoader package to batch requests for user account and profile data. Lastly, we explored what measures should be taken in production environments to limit the discoverability of our API schema and the underlying data sources behind the subgraphs.</p>
+<p>With these enhancements in place, we’re now ready to add the final subgraph to the Marked GraphQL API that will help support multi-subgraph workflows.</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>

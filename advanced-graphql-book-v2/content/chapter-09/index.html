@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en-US" xml:lang="en-US">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="../../images/favicon.ico" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Mandi Wise" />
+  <title>Advanced GraphQL with Apollo</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+  </style>
+  <link rel="stylesheet" href="../../css/web.min.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<div id="masthead">
+<div class="close-button-wrapper">
+<button id="masthead-close" type="button"><span>Close</span></button>
+</div>
+<header id="title-block-header">
+<h1 class="title">Advanced GraphQL with Apollo</h1>
+<p class="subtitle">Build a Distributed GraphQL API with Apollo Federation 2 and Apollo Server</p>
+<p class="author">Mandi Wise</p>
+</header>
+<nav class="book-nav">
+<ol class="front-matter-content">
+<li><a href="../preface/index.html">Preface</a></li>
+</ol>
+<ol class="main-matter-content">
+<li><a href="../chapter-01/index.html">Apollo Federation and Gateway</a></li>
+<li><a href="../chapter-02/index.html">Authentication and User Account Management with Auth0</a></li>
+<li><a href="../chapter-03/index.html">Apollo Data Sources, Custom Scalars, and Custom Directives</a></li>
+<li><a href="../chapter-04/index.html">User Metadata Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-05/index.html">Relay-Style Pagination</a></li>
+<li><a href="../chapter-06/index.html">Bookmark Management with MongoDB and Mongoose</a></li>
+<li><a href="../chapter-07/index.html">API Performance and Security Considerations</a></li>
+<li><a href="../chapter-08/index.html">Multi-Subgraph Workflows with Temporal</a></li>
+<li><a href="../chapter-09/index.html">Managed Federation with Apollo Studio</a></li>
+<li><a href="../chapter-10/index.html">Apollo Router</a></li>
+</ol>
+<ol class="back-matter-content">
+<li><a href="../about-the-author/index.html">About the Author</a></li>
+<li><a href="../changelog/index.html">Changelog</a></li>
+</ol>
+<img src="../../images/8bp-logo-white.svg" class="logo" alt="8-Bit Press Inc. logo" />
+</nav>
+</div>
+<div id="chapter">
+<div class="chapter-nav">
+<nav id="TOC" role="doc-toc">
+<button id="masthead-open" type="button"><span>Book Navigation</span></button>
+<h2 id="toc-title">Contents</h2>
+<ul>
+<li><a href="#managed-federation-with-apollo-studio">Chapter 9: Managed Federation with Apollo Studio</a>
+<ul>
+<li><a href="#why-use-managed-federation">Why Use Managed Federation?</a></li>
+<li><a href="#publish-subgraphs-to-a-deployed-graph-in-apollo-studio">Publish Subgraphs to a Deployed Graph in Apollo Studio</a></li>
+<li><a href="#configure-apollo-gateway-to-run-in-managed-mode">Configure Apollo Gateway to Run in Managed Mode</a></li>
+<li><a href="#safely-evolve-subgraphs-with-schema-checks">Safely Evolve Subgraphs with Schema Checks</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul></li>
+</ul>
+</nav>
+</div>
+<div class="content">
+<h1 id="managed-federation-with-apollo-studio">Chapter 9: Managed Federation with Apollo Studio</h1>
+<div class="boxout">
+<p>In this chapter, we will:</p>
+<ul>
+<li>Set up a free Apollo Studio account</li>
+<li>Create a deployed graph in Apollo Studio and publish subgraph schemas to it</li>
+<li>Configure the existing gateway to run use managed federation</li>
+<li>Gain insight into operation latency by capturing federated traces and sending that data to Apollo Studio</li>
+<li>Use schema checks in Apollo Studio to validate proposed changes</li>
+</ul>
+</div>
+<h2 id="why-use-managed-federation">Why Use Managed Federation?</h2>
+<p>We’ve made amazing strides in building out the Marked GraphQL API over the last eight chapters. It now consists of four distinct subgraphs with all of the queries and mutations required for client developers to build out the essential features of any front-end app for Marked. As we built out these subgraphs, we relied on <code>IntrospectAndCompose</code> to poll the subgraphs and recompose the supergraph schema on the fly in the gateway as we worked. This approach worked well enough but—as alluded to in Chapter 1—a production environment will require a different approach.</p>
+<p>To better understand why, let’s pause and consider what a production-ready workflow would look like. GraphQL APIs are meant to be flexible enough to evolve in response to changing product requirements, and federated graphs are no exception. If a client application needs to add a field on the root <code>Query</code> type to support a new feature, then the applicable subgraph should be able to make that update and trigger the recomposition of the supergraph schema.</p>
+<p>But what happens if a subgraph makes a change that results in a composition failure, such as removing an entity type that other subgraphs have extended with computed fields? This scenario would cause the gateway to throw an error and lead to downtime for the API. Ideally, we would have an easy way to detect potential issues with composition before the gateway is aware of them so that subgraph service owners can resolve them before deploying their updated code to production.</p>
+<p>This is where a schema registry such as <a href="https://www.apollographql.com/docs/studio">Apollo Studio</a> comes in. A schema registry will act as the source of truth for API’s type definitions and help subgraph teams collaborate more fluidly as they update their portions of the schema. And when teams contribute changes to their subgraphs where they unknowingly break composition, the schema registry can also detect these errors in advance and continue to serve the previous composable version of the supergraph schema until further changes are made that allow composition to proceed. Ultimately, a schema registry allows us to maintain separation of concerns within the gateway itself by isolating supergraph composition from query planning and execution.</p>
+<p>A version of our distributed GraphQL API architecture that incorporates managed federation will end up looking something like this:</p>
+<p><img src="../../images/diagrams/managed-federation-overview.png" alt="Subgraphs publish schemas to Apollo Studio and the gateway polls Apollo Uplink for changes and sends traces to Apollo Studio" /><br />
+</p>
+<p>In the sections that follow, we will set up a free Apollo Studio account, publish subgraphs to its schema registry, and reconfigure the existing gateway to use managed federation as pictured in the above diagram.</p>
+<h2 id="publish-subgraphs-to-a-deployed-graph-in-apollo-studio">Publish Subgraphs to a Deployed Graph in Apollo Studio</h2>
+<p>To set up managed federation, you will need an Apollo Studio account. Apollo Studio offers a generous free tier that will allow us to manage the Marked schema in its registry and run millions of queries against our graph every month. You can sign up for an Apollo Studio account by following these quick steps.</p>
+<p>First, navigate to <a href="https://studio.apollographql.com/">https://studio.apollographql.com/</a> to register for a new account:</p>
+<p><img src="../../images/screenshots/apollo-studio-sign-up.png" alt="Sign up for Apollo Studio" /><br />
+</p>
+<p>Click the “Create an account” link and then create a new account either using your email or GitHub account. Once your account has been created, you’ll have the option to choose a “Deployed” or “Development” graph. A deployed graph can take advantage of Apollo Studio features such as its schema registry and metrics reporting, and is typically meant for team collaboration. A development graph will poll your development server for schema updates as you work, much like the Sandbox version of Apollo Studio Explorer does but provides an extended feature set compared to Sandbox.</p>
+<p>For our purposes, we will choose a deployed graph because we want to publish Marked’s subgraph schemas to the registry. It’s also important to note that a single graph in Apollo Studio will contain multiple subgraphs. In other words, we only need to create one graph for the entire Marked GraphQL API and we will publish all of its subgraph schemas to that graph. Give the graph a unique name, leave the default “Supergraph” option selected in the “Graph Architecture” drop-down, and click the “Next” button below it to proceed:</p>
+<p><img src="../../images/screenshots/apollo-studio-create-graph.png" alt="Create a new deployed graph in Apollo Studio" /><br />
+</p>
+<p>A new modal will appear with instructions on explaining how to publish subgraph schemas to the Apollo Studio schema registry:</p>
+<p><img src="../../images/screenshots/apollo-studio-publish-instructions.png" alt="Apollo Studio’s directions for publishing a subgraph with Rover" /><br />
+</p>
+<p>As these instructions suggest, we need to have the Rover CLI installed to publish the subgraph’s schema into the registry. If you haven’t installed Rover yet, then you can refer to the “Required Software” section of the Preface for instructions on how to do this.</p>
+<p>Before publishing a subgraph schema, we need to familiarize ourselves with one more important Apollo Studio concept called a <em>variant</em>. A variant typically corresponds to some environment where we would run a GraphQL API. For example, a graph might have <code>development</code> and <code>production</code> variants. A graph can have many different variants if needed, which means there may be just as many slightly different versions of a graph’s schema depending on what state the corresponding environments are in, but typically, there will be a high degree of overlap between the variants. Related to variants, a <em>graph ref</em> is comprised of the ID of the graph plus a variant name with an <code>@</code> symbol as a delimiter.</p>
+<p>The first subgraph schema that we’ll push to Apollo Studio will be from the accounts service and we’ll use the <code>rover subgraph publish</code> command to do so. There are two different ways that we can tell Rover where to find this subgraph’s schema. The first is to point to the <code>.graphql</code> file that contains the SDL-based type definitions for the subgraph, and the second is to send an introspection query to the accounts service’s endpoint and pipe the output into the <code>rover subgraph publish</code> command. We will choose the second option as we’d quickly discover that we have a composition error in Apollo Studio when simply pointing to the <code>schema.graphql</code> file because the definitions for the authorization-related directives aren’t directly available in there (recall that they are concatenated onto the subgraph SDL in <code>accounts/src/index.js</code> instead).</p>
+<p>Using the following example command, replace the <code>APOLLO_KEY</code> variable and the graph ID portion of the graph ref with the values that correspond to the graph you just created. The directory location will not matter when you run this command:</p>
+<div class="highlight"><pre><span></span>rover subgraph introspect http://localhost:4001 <span class="p">|</span>
+<span class="nv">APOLLO_KEY</span><span class="o">=</span>XXXXXXXXXXXX <span class="se">\</span>
+rover subgraph publish &lt;YOUR_GRAPH_ID&gt;@development <span class="se">\</span>
+  --name accounts <span class="se">\</span>
+  --schema - <span class="se">\</span>
+  --routing-url http://localhost:4001
+</pre></div>
+
+<div class="boxout">
+<p>If you omit the <code>@</code> symbol and the variant name and only specify the graph ID as an argument to publish, then Apollo Studio will create a default variant called <code>current</code>.</p>
+<p>Additionally, instead of using the <a href="https://www.apollographql.com/docs/studio/api-keys/#graph-api-keys">Graph API key</a> provided in the “Publish your schema using Federation” modal, you can create a <a href="https://www.apollographql.com/docs/studio/api-keys/#personal-api-keys">Personal API key</a> for Apollo Studio and save to a <a href="https://www.apollographql.com/docs/rover/configuring#configuration-profiles">configuration profile</a> using the <code>rover config auth</code> command so that you don’t need to set the <code>APOLLO_KEY</code> variable each time you run a Rover command for any graph that you create in your Apollo Studio organization.</p>
+</div>
+<p>Over in Apollo Studio now, if we refresh the browser and navigate to the Schema page and look under the Reference tab, then we should see that the types and fields that are defined in the accounts service are now in the registry:</p>
+<p><img src="../../images/screenshots/apollo-studio-accounts-subgraph-reference.png" alt="Apollo Studio schema reference with account-related types and fields only" /><br />
+</p>
+<p>Under the SDL tab, we can also see all three representations of the accounts service’s schema as an API schema, supergraph schema, and a subgraph schema. If we proceed with publishing the remaining subgraphs now in the order that we built them, the subgraphs will compose neatly into the supergraph schema in the registry. But let’s publish the bookmarks service’s schema next instead to see what happens when we publish a new subgraph schema that breaks supergraph composition in Apollo Studio:</p>
+<div class="highlight"><pre><span></span>rover subgraph introspect http://localhost:4003 <span class="p">|</span>
+<span class="nv">APOLLO_KEY</span><span class="o">=</span>XXXXXXXXXXXX <span class="se">\</span>
+rover subgraph publish &lt;YOUR_GRAPH_ID&gt;@development <span class="se">\</span>
+  --name bookmarks <span class="se">\</span>
+  --schema - <span class="se">\</span>
+  --routing-url http://localhost:4003
+</pre></div>
+
+<p>We will see the following error output in the terminal:</p>
+<div class="highlight"><pre><span></span>WARN: The following build errors occurred:
+EXTERNAL_MISSING_ON_BASE: Field <span class="s2">&quot;Profile.interests&quot;</span> is marked @external on all the subgraphs in which it is listed <span class="o">(</span>subgraph <span class="s2">&quot;bookmarks&quot;</span><span class="o">)</span>.
+</pre></div>
+
+<p>Similarly, if we refresh Apollo Studio, then we will see that the “Federated V2” button in the header has turned red. The same error message appears in a modal when we click that button:</p>
+<p><img src="../../images/screenshots/apollo-studio-composition-erorrs.png" alt="Composition errors in Apollo Studio" /><br />
+</p>
+<p>This error occurs because we stubbed out the <code>Profile</code> entity in the bookmarks service so we could reference and extend it, but we also added the <code>interests</code> field to that definition with an <code>@external</code> directive applied to support the use of the <code>@requires</code> directive for the computed <code>recommendedBookmarks</code> field. However, the <code>@external</code> directive indicates to the gateway that the <code>interests</code> field is referenced by the bookmarks service, but it is not resolvable from that service—or any service at the moment, for that matter—which breaks composition.</p>
+<p>What we have seen here is a key feature of managed federation. We attempted to publish a change to the schema registry that breaks composition but Apollo Studio doesn’t allow the supergraph schema to be updated until the issue is resolved. That means that a gateway instance running in managed mode will continue to serve the schema exactly as it was when we initially published the accounts service’s schema, and Apollo Studio will wait until the composition error is resolved before providing an updated supergraph SDL to the gateway. This is a very important feature to prevent breaking changes from being shipped to a gateway in production.</p>
+<p>We can fix this error by publishing the profiles service’s schema next:</p>
+<div class="highlight"><pre><span></span>rover subgraph introspect http://localhost:4002 <span class="p">|</span>
+<span class="nv">APOLLO_KEY</span><span class="o">=</span>XXXXXXXXXXXX <span class="se">\</span>
+rover subgraph publish &lt;YOUR_GRAPH_ID&gt;@development <span class="se">\</span>
+  --name profiles <span class="se">\</span>
+  --schema - <span class="se">\</span>
+  --routing-url http://localhost:4002
+</pre></div>
+
+<p>Composition will succeed now that the <code>interests</code> field can be resolved by profiles service and we will be able to see all three subgraph schemas in Apollo Studio:</p>
+<p><img src="../../images/screenshots/apollo-studio-api-schema-no-composition-errors.png" alt="Three successfully composed subgraphs in Apollo Studio" /><br />
+</p>
+<p>Lastly, we can publish the workflows service’s schema:</p>
+<div class="highlight"><pre><span></span>rover subgraph introspect http://localhost:4004 <span class="p">|</span>
+<span class="nv">APOLLO_KEY</span><span class="o">=</span>XXXXXXXXXXXX <span class="se">\</span>
+rover subgraph publish &lt;YOUR_GRAPH_ID&gt;@development <span class="se">\</span>
+  --name workflows <span class="se">\</span>
+  --schema - <span class="se">\</span>
+  --routing-url http://localhost:4004
+</pre></div>
+
+<p>Before moving on, check the Schema page in Apollo Studio to confirm that all four subgraphs are now composed into the supergraph schema.</p>
+<h2 id="configure-apollo-gateway-to-run-in-managed-mode">Configure Apollo Gateway to Run in Managed Mode</h2>
+<p>Now that the schema is fully composed in the Apollo Studio schema registry, we can update the gateway configuration to use managed federation instead. Doing so only requires two updates to the gateway service’s code. The first step is adding the graph API key as a variable named <code>APOLLO_KEY</code> in its <code>.env</code> file along with an <code>APOLLO_GRAPH_REF</code> variable to indicate which graph and variant from the schema registry should be used with this instance of the gateway:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/.env</p>
+</div>
+<div class="highlight"><pre><span></span>APOLLO_KEY=XXXXXXXXXXXX
+APOLLO_GRAPH_REF=&lt;YOUR_GRAPH_ID&gt;@development
+</pre></div>
+
+<p>Next, we no longer need to compose the supergraph SDL at runtime in the gateway, so we can remove the <code>supergraphSdl</code> option from it. The updated <code>ApolloGateway</code> constructor will only contain the <code>buildService</code> option now:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/src/config/apollo.js</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1">// ...</span>
+
+<span class="kd">function</span> <span class="nx">initGateway</span><span class="p">(</span><span class="nx">httpServer</span><span class="p">)</span> <span class="p">{</span>
+  <span class="kr">const</span> <span class="nx">gateway</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">ApolloGateway</span><span class="p">({</span>
+    <span class="nx">buildService</span><span class="p">({</span> <span class="nx">url</span> <span class="p">})</span> <span class="p">{</span>
+      <span class="k">return</span> <span class="k">new</span> <span class="nx">RemoteGraphQLDataSource</span><span class="p">({</span>
+        <span class="nx">apq</span><span class="o">:</span> <span class="kc">true</span><span class="p">,</span>
+        <span class="nx">url</span><span class="p">,</span>
+        <span class="nx">willSendRequest</span><span class="p">({</span> <span class="nx">request</span><span class="p">,</span> <span class="nx">context</span> <span class="p">})</span> <span class="p">{</span>
+          <span class="nx">request</span><span class="p">.</span><span class="nx">http</span><span class="p">.</span><span class="nx">headers</span><span class="p">.</span><span class="nx">set</span><span class="p">(</span>
+            <span class="s2">&quot;user&quot;</span><span class="p">,</span>
+            <span class="nx">context</span><span class="p">.</span><span class="nx">user</span> <span class="o">?</span> <span class="nx">JSON</span><span class="p">.</span><span class="nx">stringify</span><span class="p">(</span><span class="nx">context</span><span class="p">.</span><span class="nx">user</span><span class="p">)</span> <span class="o">:</span> <span class="kc">null</span>
+          <span class="p">);</span>
+        <span class="p">}</span>
+      <span class="p">});</span>
+    <span class="p">}</span>
+  <span class="p">});</span>
+
+  <span class="c1">// ...</span>
+<span class="p">}</span>
+
+<span class="kr">export</span> <span class="k">default</span> <span class="nx">initGateway</span><span class="p">;</span>
+</pre></div>
+
+<p>Upon restarting the gateway, we should see a message logged to the terminal like this:</p>
+<p></p>
+<div class="code-context">
+<p>gateway/</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c1"># ...</span>
+Apollo usage reporting starting! See your graph at https://studio.apollographql.com/graph/marked-elkcew@development/
+Gateway ready at http://localhost:4000/
+</pre></div>
+
+<p>With that, the Marked GraphQL API is officially running in managed mode and the gateway will poll Apollo Uplink for supergraph updates and hot-reload those changes in the gateway without requiring it to restart.</p>
+<p>Something interesting to note in the logged message above is that by setting up managed federation we have also enabled <em>usage reporting</em> to Apollo Studio. Usage reporting means that the gateway will send <a href="https://www.apollographql.com/docs/federation/metrics">federated trace data</a> to Apollo Studio so we can understand how the API is being used and where potential performance issues may exist. Tracing data also helps power another important feature in Apollo Studio that we will explore in the next section called “Schema Checks.”</p>
+<p>To see how this tracing data is put to use in Apollo Studio, we’ll have to run a few operations against our API. However, rather than using the Sandbox version of Explorer, this time we will use the Explorer interface that’s built into Apollo Studio for use with deployed or development graphs. It can be accessed using the same icon in the lefthand menu while logged into Apollo Studio.</p>
+<p>Before running any operations, let’s set some headers first. In the “Headers” panel below the editor, add the <code>apollographql-client-name</code> header with a value of <code>Apollo Studio Explorer</code> and an <code>apollographql-client-version</code> of <code>1.0</code>. These headers will help enrich our traces with client-specific metadata so we can understand how the API is being used and by whom as well. Now add the following operation document and variables to the Explorer editor:</p>
+<p></p>
+<div class="code-context">
+<p>GraphQL Query</p>
+</div>
+<div class="highlight"><pre><span></span><span class="kt">query</span> <span class="k">SearchBookmarks</span><span class="p">(</span><span class="nv">$query</span><span class="p">:</span> <span class="k">String</span><span class="p">!</span>, <span class="nv">$first</span><span class="p">:</span> <span class="k">Int</span><span class="p">)</span> <span class="p">{</span>
+  <span class="k">searchBookmarks</span><span class="p">(</span>query: <span class="nv">$query</span>, first: <span class="nv">$first</span><span class="p">)</span> <span class="p">{</span>
+    <span class="k">edges</span> <span class="p">{</span>
+      <span class="k">node</span> <span class="p">{</span>
+        <span class="k">title</span>
+        <span class="k">url</span>
+      <span class="p">}</span>
+    <span class="p">}</span>
+  <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+
+<p></p>
+<div class="code-context">
+<p>Query Variables</p>
+</div>
+<div class="highlight"><pre><span></span><span class="p">{</span>
+  <span class="nt">&quot;query&quot;</span><span class="p">:</span> <span class="s2">&quot;graphql&quot;</span><span class="p">,</span>
+  <span class="nt">&quot;first&quot;</span><span class="p">:</span> <span class="mi">10</span>
+<span class="p">}</span>
+</pre></div>
+
+<p>When you run the operation for the first time you will be prompted to set an endpoint for the API so add <a href="http://localhost:4000">http://localhost:4000</a> to the connection settings, click the “Save” button in the modal, and then run the operation several times:</p>
+<p><img src="../../images/screenshots/apollo-studio-explorer-operation.png" alt="Using Apollo Studio Explorer with a deployed graph" /><br />
+</p>
+<p>We can jump over to the operations tab now and see the <code>SearchBookmarks</code> query listed in the “Last day overview” section:</p>
+<p><img src="../../images/screenshots/apollo-studio-operations-dashboard.png" alt="Operations page in Apollo Studio that displays operation stats from the last day" /><br />
+</p>
+<p>If we click on that operation, then we can see that the named “Apollo Studio Explorer” client has run the operation a number of times:</p>
+<p><img src="../../images/screenshots/apollo-studio-operation-count-by-client.png" alt="Client usage stats displayed for the SearchBookmarks operation" /><br />
+</p>
+<p>Similarly, if we scroll down the page we will see the request latency distribution:</p>
+<p><img src="../../images/screenshots/apollo-studio-operation-latencies.png" alt="Request latency distribution for the SearchBookmarks operation" /><br />
+</p>
+<p>Back in Explorer, we can get more granular insights into how various fields contribute to request latency by taking advantage of some of the advanced settings here and turning on editor hints:</p>
+<p><img src="../../images/screenshots/apollo-studio-explorer-field-response-times.png" alt="Field latency hints applied to an operation document in Explorer" /><br />
+</p>
+<p>A key thing to note about using the full-featured version of Explorer with a deployed graph is that Apollo Studio will not automatically poll a development environment for updates—we would need to publish a subgraph schema again if we made any changes to it. Development graphs, however, can poll a local endpoint for updates while providing access to a broader range of features than the Sandbox version of Explorer does.</p>
+<h2 id="safely-evolve-subgraphs-with-schema-checks">Safely Evolve Subgraphs with Schema Checks</h2>
+<p>Now that all of the subgraph schemas have been published to the registry, the gateway is running in managed mode, and we are reporting usage data to Apollo Studio, let’s imagine what would happen when the Marked app is deployed to production one day. First, we would want to create a separate variant in Apollo Studio for the production version of the schema. Most commonly, subgraph schema publication would be automated during some kind of deployment workflow. Doing so would allow us to continue to work on the <code>development</code> variant without affecting the version of the schema that’s exposed to clients in production environments.</p>
+<p>Now let’s imagine that the Marked application has been serving client traffic for some time and we now need to make a change to the schema. This change may be necessary due to a new product requirement or a change in one of the underlying data sources that back a subgraph. GraphQL APIs are meant to evolve over time by design, but how can we be sure that the proposed updates won’t cause breaking changes for clients that may depend on the affected types and fields?</p>
+<p>This is where <em>schema checks</em> come in. Schema checks are another feature of Apollo Studio (recently made free for any account type) that allow you to statically analyze proposed changes to a subgraph schema against a slice of client traffic for a specific time range. The schema check will flag any potentially breaking changes based on this traffic and it will also allow us to identify any new compositions issues before the subgraph schema is republished.</p>
+<p>To try out the schema check process, let’s begin by making what we would expect to be a non-breaking change to the bookmarks service’s schema. Specifically, we will set the <code>title</code> field’s output type to be a non-nullable <code>String</code> now:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">A bookmark contains content authored by a user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="kt">type</span> <span class="k">Bookmark</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+  <span class="s2">&quot;A title to describe the bookmarked content.&quot;</span>
+<span class="hll">  title: <span class="k">String</span><span class="p">!</span>
+</span>  <span class="s2">&quot;The URL of the page to be bookmarked.&quot;</span>
+  url: <span class="k">URL</span><span class="p">!</span>
+<span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>We expect this change to be non-breaking because any clients that depend on this field can still expect it to be there. In fact, now that the field is non-nullable these clients can be even more certain that a <code>title</code> value will be available when requested.</p>
+<p>Without publishing this change to the Apollo Studio registry yet, let’s run a schema check using the <code>rover subgraph check</code> command to verify that this change is safe:</p>
+<div class="highlight"><pre><span></span>rover subgraph introspect http://localhost:4003 <span class="p">|</span>
+<span class="nv">APOLLO_KEY</span><span class="o">=</span>XXXXXXXXXXXX <span class="se">\</span>
+rover subgraph check &lt;YOUR_GRAPH_ID&gt;@development <span class="se">\</span>
+  --name bookmarks <span class="se">\</span>
+  --schema -
+</pre></div>
+
+<p>We should see the following output in the terminal, indicating that the proposed change to the bookmarks service’s schema is safe:</p>
+<p><img src="../../images/screenshots/terminal-schema-check-pass.png" alt="Passed schema check output in terminal" /><br />
+</p>
+<div class="boxout">
+<p>You can see the <a href="https://www.apollographql.com/docs/studio/schema-checks/#types-of-schema-changes">full list of types of schema changes</a> in the Apollo Studio documentation.</p>
+</div>
+<p>We can also see a record of the outcome of this schema check on the Checks page in Apollo Studio:</p>
+<p><img src="../../images/screenshots/apollo-studio-schema-check-pass.png" alt="Passed schema check in Apollo Studio" /><br />
+</p>
+<p>Now let’s try running a check against a potentially breaking change by changing the output type of the non-null <code>url</code> field to nullable so that there is no longer a guarantee to clients who have queried this field that a value will be available:</p>
+<p></p>
+<div class="code-context">
+<p>bookmarks/src/graphql/schema.graphql</p>
+</div>
+<div class="highlight"><pre><span></span><span class="c c-Singline"># ...</span>
+
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="c c-Multi">A bookmark contains content authored by a user.</span>
+<span class="c c-Multi">&quot;&quot;&quot;</span>
+<span class="kt">type</span> <span class="k">Bookmark</span> <span class="p">{</span>
+  <span class="c c-Singline"># ...</span>
+  <span class="s2">&quot;A title to describe the bookmarked content.&quot;</span>
+  title: <span class="k">String</span><span class="p">!</span>
+  <span class="s2">&quot;The URL of the page to be bookmarked.&quot;</span>
+<span class="hll">  url: <span class="k">URL</span>
+</span><span class="p">}</span>
+
+<span class="c c-Singline"># ...</span>
+</pre></div>
+
+<p>Next, we’ll rerun the schema check:</p>
+<div class="highlight"><pre><span></span>rover subgraph introspect http://localhost:4003 <span class="p">|</span>
+<span class="nv">APOLLO_KEY</span><span class="o">=</span>XXXXXXXXXXXX <span class="se">\</span>
+rover subgraph check &lt;YOUR_GRAPH_ID&gt;@development <span class="se">\</span>
+  --name bookmarks <span class="se">\</span>
+  --schema -
+</pre></div>
+
+<p>And we should see the following output this time:</p>
+<p><img src="../../images/screenshots/terminal-schema-check-fail.png" alt="Failed schema check output in terminal" /><br />
+</p>
+<p>Over in Apollo Studio, we can also see the failed check:</p>
+<p><img src="../../images/screenshots/apollo-studio-schema-check-fail.png" alt="Failed schema check in Apollo Studio" /><br />
+</p>
+<p>If we click on the check, we can see detailed information about why the check failed:</p>
+<p><img src="../../images/screenshots/apollo-studio-schema-check-fail-detail.png" alt="Detailed view of a failed schema check in Apollo Studio" /><br />
+</p>
+<p>Additionally, if we scroll down this page, then we can also see what clients are affected by this change. This insight can help us make an informed decision about whether we want to override this potential breaking change if flagged again in the future or if we need to follow up with the identified clients before publishing this change to the schema.</p>
+<h2 id="summary">Summary</h2>
+<p>In this chapter, we explored the use case for managed federation, particularly for production environments where it’s important to validate subgraph schema changes in advance to ensure that they won’t break composition of the supergraph for a running gateway. We then published the accounts, bookmarks, profiles, and workflows subgraphs to the Apollo Studio schema registry and configured the existing Apollo Gateway to use managed federation automatically by adding <code>APOLLO_KEY</code> and <code>APOLLO_GRAPH_REF</code> environment variables to it.</p>
+<p>We also took advantage of some additional features of Apollo Studio that are enabled by the federated traces that the gateway sends to it via its usage reporting mechanism. Lastly, we used schema checks to determine that proposed changes to a subgraph schema will be safe for clients that are actively querying the API and will result in a valid supergraph composition.</p>
+<p>In the final chapter, we’ll wrap up our survey of advanced GraphQL techniques by trying out the Rust-based Apollo Router, which is a newer addition to Apollo’s suite of open-source software.</p>
+<footer>
+<p class="copyright">Copyright © 2022 <a href="https://8bit.press/">8-Bit Press Inc.</a> All rights reserved.</p>
+</footer>
+</div>
+</div>
+<script>
+(function () {
+  "use strict";
+
+  const chapter = document.getElementById("chapter");
+
+  // Set width of fixed-position chapter navigation based on parent
+  function setChapterNavWidth() {
+    const chapterNav = document.getElementsByClassName("chapter-nav")[0];
+    let { width: chapterWidth } = chapter.getBoundingClientRect();
+    chapterNav.setAttribute(
+      "style",
+      `width: ${chapterWidth >= 960 ? chapterWidth * 0.3 + 36 + "px" : "100%"}`
+    );
+  }
+
+  setChapterNavWidth();
+  window.addEventListener("resize", setChapterNavWidth);
+
+  // Open and close the book navigation in the masthead
+  const openMastheadButton = document.getElementById("masthead-open");
+  const closeMastheadButton = document.getElementById("masthead-close");
+  const masthead = document.getElementById("masthead");
+
+  openMastheadButton.addEventListener("click", function (event) {
+    event.stopPropagation();
+    masthead.style.marginLeft = "0px";
+  });
+
+  closeMastheadButton.addEventListener("click", function () {
+    masthead.style.marginLeft = "-100%";
+  });
+
+  chapter.addEventListener("click", function () {
+    if (masthead.style.marginLeft === "0px") {
+      masthead.style.marginLeft = "-100%";
+    }
+  });
+
+  // Add "Copy" button to code snippets
+  // Reference: https://tomspencer.dev/blog/2018/09/14/adding-click-to-copy-buttons-to-a-hugo-powered-blog/
+  if (!document.queryCommandSupported("copy")) {
+    return;
+  }
+
+  function flashCopyMessage(el, msg) {
+    el.textContent = msg;
+    setTimeout(function () {
+      el.textContent = "Copy";
+    }, 1000);
+  }
+
+  function selectText(node) {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return selection;
+  }
+
+  function addCopyButton(containerEl) {
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "highlight-copy-btn";
+    copyBtn.textContent = "Copy";
+
+    var codeEl = containerEl.firstElementChild;
+    copyBtn.addEventListener("click", function () {
+      try {
+        const selection = selectText(codeEl);
+        document.execCommand("copy");
+        selection.removeAllRanges();
+
+        flashCopyMessage(copyBtn, "Copied!");
+      } catch (e) {
+        console && console.log(e);
+        flashCopyMessage(copyBtn, "Failed :'(");
+      }
+    });
+
+    containerEl.appendChild(copyBtn);
+  }
+
+  // Add copy button to code blocks
+  var highlightBlocks = document.getElementsByClassName("highlight");
+  Array.prototype.forEach.call(highlightBlocks, addCopyButton);
+})();
+</script>
+</body>
+</html>
