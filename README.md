@@ -5,3 +5,7 @@ This repo contains PDF, EPUB, and HTML versions of the second edition of the _Ad
 **[Download the complete source code for the application built throughout this book here.](https://github.com/8bitpress/advanced-graphql-source-code-v2)**
 
 Happy coding!
+
+---
+
+Copyright © 2022 8-Bit Press Inc.
